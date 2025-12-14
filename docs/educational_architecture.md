@@ -67,6 +67,28 @@ A lightweight **FastAPI** server that runs locally alongside the viewer.
     1.  **Code Execution**: Receives Python code from the viewer, executes it locally, and returns `stdout`/`stderr`.
     2.  **Graph RAG**: Hosts the RAG pipeline for the Chat Agent.
 
+## 4. Chat Agent (Phase 3)
+The Chat Agent is an AI pair programmer embedded in the viewer.
+
+### Strategy: "Normal Chat First"
+1.  **Basic Chat**: The agent first acts as a helpful assistant using OpenRouter models (e.g., `mistralai/devstral-2512:free`).
+2.  **RAG Enhancement**: It then retrieves relevant context from the Knowledge Graph (LanceDB) to answer code-specific questions.
+3.  **Tool Use**: (Future) It will be able to execute code and navigate the graph.
+
+### Runtime Bridge (`scripts/bridge.py`)
+- **Framework**: FastAPI (Port 8999).
+- **Endpoints**:
+    - `POST /chat`: Handles chat messages and RAG.
+    - `POST /execute`: Runs Python code snippets (sandboxed).
+
+## 5. Visualization Engine (Phase 2 - Completed)
+Interactive visualizations are rendered using React components mapped to concept IDs.
+- **Registry**: `docs/viewer/src/viz/registry.jsx` maps IDs (e.g., `attention.matrix_heatmap`) to components.
+- **Container**: `<VizContainer />` dynamically loads the correct visualization.
+- **Implemented**:
+    - **Matrix Multiplication**: Interactive grid view.
+    - **Softmax**: Temperature slider demo.
+
 ### 4.2. Graph RAG Architecture
 To enable "Chat with Codebase", we use a Retrieval-Augmented Generation system grounded in the Knowledge Graph.
 
@@ -108,7 +130,18 @@ To enable "Chat with Codebase", we use a Retrieval-Augmented Generation system g
         2.  Bridge embeds query and searches LanceDB for top-k relevant nodes.
         3.  Bridge constructs prompt with node context (Name, Type, ID).
         4.  LLM generates response + **Focused Nodes** (JSON).
+        4.  LLM generates response + **Focused Nodes** (JSON).
         5.  Viewer displays response and **Highlights** the focused nodes in the graph.
+
+    - **API Key Management**:
+        - **Settings Modal**: Allows users to input their own OpenRouter API Key (`sk-or-...`) or login via OAuth.
+        - **OAuth PKCE**: Securely authenticates users with OpenRouter to bypass rate limits on free models.
+        - **Priority**: User Key > OAuth Key > Server Default Key.
+
+    - **Interactive Focus Mode**:
+        - **Focus Picker**: A UI list displaying nodes suggested by the Chat Agent.
+        - **Interaction**: Clicking a node in the picker centers the camera on it and triggers a strong highlight effect.
+        - **Neighbor Highlighting**: Secondary highlighting for connected nodes to show context.
 
 ### 4.3. Activation Visualization (Planned)
 Future extension to visualize internal model state.

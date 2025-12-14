@@ -1,5 +1,5 @@
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import sys
@@ -15,7 +15,10 @@ from openai import OpenAI
 import lancedb
 
 # Load environment variables
+print(f"Current Working Directory: {os.getcwd()}")
+print(f".env exists: {os.path.exists('.env')}")
 load_dotenv()
+print(f"OPENROUTER_API_KEY found: {'Yes' if os.getenv('OPENROUTER_API_KEY') else 'No'}")
 
 # Initialize FastAPI app
 app = FastAPI(title="NanoChat Bridge")
@@ -149,12 +152,20 @@ async def index_content(request: IndexRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # 4. Initialize OpenRouter Client
+    # 4. Initialize OpenRouter Client (MOVED OUT)
+    pass
+
+def init_chat():
+    global OPENROUTER_CLIENT
     api_key = os.getenv("OPENROUTER_API_KEY")
     if api_key:
         OPENROUTER_CLIENT = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
+            default_headers={
+                "HTTP-Referer": "http://localhost:8999",
+                "X-Title": "NanoChat Educational",
+            }
         )
         print("OpenRouter client initialized.")
     else:
@@ -162,64 +173,95 @@ async def index_content(request: IndexRequest):
 
 # Initialize on startup
 init_rag()
+init_chat()
 
 # --- Models ---
 class ExecuteRequest(BaseModel):
     code: str
 
+import requests
+
+# ...
+
+@app.get("/models")
+async def get_models():
+    """Fetches available free models from OpenRouter."""
+    try:
+        resp = requests.get("https://openrouter.ai/api/v1/models")
+        if resp.status_code == 200:
+            data = resp.json()
+            # Filter for free models (usually contain ':free' or price is 0)
+            # OpenRouter API returns 'pricing' object.
+            # For simplicity, we'll look for ':free' in ID as a heuristic, 
+            # and also include some known cheap ones if needed.
+            # The user specifically asked for "free filtered models".
+            
+            all_models = data.get("data", [])
+            free_models = [
+                m for m in all_models 
+                if ":free" in m["id"] or m.get("pricing", {}).get("prompt") == "0"
+            ]
+            return {"models": free_models}
+        return {"models": []}
+    except Exception as e:
+        print(f"Error fetching models: {e}")
+        return {"models": []}
+
 class ChatRequest(BaseModel):
     message: str
+    model: str = "google/gemini-2.0-flash-exp:free" # Default
     context_nodes: Optional[List[str]] = None
 
 class ChatResponse(BaseModel):
     response: str
     focused_nodes: List[str]
 
-# --- Endpoints ---
-
-@app.post("/execute")
-async def execute_code(request: ExecuteRequest):
-    """Executes Python code and returns output."""
-    code = request.code
-    stdout_capture = io.StringIO()
-    stderr_capture = io.StringIO()
-    
-    try:
-        with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
-            exec_globals = {}
-            exec(code, exec_globals)
-            
-        return {
-            "stdout": stdout_capture.getvalue(),
-            "stderr": stderr_capture.getvalue(),
-            "status": "success"
-        }
-    except Exception:
-        return {
-            "stdout": stdout_capture.getvalue(),
-            "stderr": traceback.format_exc(),
-            "status": "error"
-        }
+# ...
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)):
     """
     Graph RAG Chat Endpoint using LanceDB.
     """
-    if not OPENROUTER_CLIENT:
-        raise HTTPException(status_code=500, detail="OpenRouter API Key not configured.")
-    
     query = request.message
+    
+    # Determine Client to use
+    client = OPENROUTER_CLIENT
+    # print(f"DEBUG: Received Authorization Header: {authorization[:20] if authorization else 'None'}...")
+    
+    # Check for User API Key in Header
+    if authorization and authorization.startswith("Bearer "):
+        user_key = authorization.split(" ")[1]
+        if user_key:
+            # print("DEBUG: Using User API Key from Header.")
+            # Create temporary client for this request
+            client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=user_key,
+                default_headers={
+                    "HTTP-Referer": "http://localhost:8999",
+                    "X-Title": "NanoChat Educational (User Key)",
+                }
+            )
+
+    # Fallback if no API Key available at all
+    if not client:
+        return ChatResponse(
+            response="**Chat Unavailable**: No API Key found. Please connect OpenRouter in Settings or add `OPENROUTER_API_KEY` to `.env`.",
+            focused_nodes=[]
+        )
     
     # 1. Retrieve Relevant Nodes via LanceDB
     relevant_nodes = []
     if RAG_MODEL and TABLE:
-        query_embedding = RAG_MODEL.encode([query])[0]
-        results = TABLE.search(query_embedding).limit(5).to_list()
-        
-        for res in results:
-            # Distance threshold could be applied here if needed
-            relevant_nodes.append(res["id"])
+        try:
+            query_embedding = RAG_MODEL.encode([query])[0]
+            results = TABLE.search(query_embedding).limit(5).to_list()
+            for res in results:
+                relevant_nodes.append(res["id"])
+        except Exception as e:
+            print(f"RAG Error: {e}")
+            # Continue without context
     
     # 2. Construct System Prompt
     context_str = "Relevant Codebase Nodes:\n"
@@ -228,39 +270,58 @@ async def chat(request: ChatRequest):
         if node:
             context_str += f"- {node['label']} ({node['type']}): {node['id']}\n"
             
-    system_prompt = f"""You are an expert AI assistant for the 'nanochat' codebase.
+    system_prompt = f"""You are 'NanoChat', an expert AI educational assistant for the 'nanochat' codebase.
 You have access to a Knowledge Graph of the code.
-Your goal is to answer the user's questions about the code and guide them through the graph.
+Your goal is to help users understand the code, regardless of their expertise level.
 
 {context_str}
 
-Instructions:
-1. Answer the user's question based on the context and your general knowledge of LLMs/Python.
-2. You MUST identify which nodes in the graph are most relevant to your answer.
-3. Return your response in JSON format with two fields:
+**Core Instructions:**
+1. **Assess Expertise**: If the user's question is basic (e.g., "What is this?", "How do I start?"), assume they are a **Beginner**. Explain concepts simply, avoiding jargon where possible, or defining it. If the question is complex, assume **Intermediate/Expert** but remain clear.
+2. **New User Detection**: If the user says "hi", "hello", or asks a very general question, welcome them and ask about their background (e.g., "Are you new to Transformers?").
+3. **Starting Point**: If the user asks where to start, ALWAYS recommend `nanochat/gpt.py` (The Model Definition) first, as it contains the core logic. Do NOT start with config or utils.
+4. **Graph Guidance**: You MUST identify which nodes in the graph are most relevant.
+5. **Response Format**: Return JSON with:
    - "response": The text of your answer (markdown supported).
-   - "focused_nodes": A list of node IDs that should be highlighted/focused in the viewer.
+   - "focused_nodes": A list of node IDs to highlight.
+
+**Persona**:
+- Friendly, encouraging, and educational.
+- "Conversational Assistance Mode": Actively suggest the next logical step or concept to learn.
 
 Example JSON:
 {{
-  "response": "The `GPT` class is defined in `gpt.py`. It uses `CausalSelfAttention`.",
-  "focused_nodes": ["nanochat/gpt.py", "CausalSelfAttention"]
+  "response": "Welcome! Since you're new, let's start with `nanochat/gpt.py`. It contains the main `GPT` model definition and is the heart of the codebase.",
+  "focused_nodes": ["nanochat/gpt.py"]
 }}
 """
 
     # 3. Call LLM
     try:
-        completion = OPENROUTER_CLIENT.chat.completions.create(
-            model="google/gemini-2.0-flash-exp:free",
+        # print(f"DEBUG: Calling OpenRouter with Model: {request.model}")
+        # print(f"DEBUG: Using API Key: {client.api_key[:10]}...{client.api_key[-4:]}")
+        # print(f"DEBUG: Client Headers: {client.default_headers}")
+        
+        completion = client.chat.completions.create(
+            model=request.model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": query}
             ],
             response_format={"type": "json_object"}
         )
+
         
         content = completion.choices[0].message.content
-        result = json.loads(content)
+        try:
+            result = json.loads(content)
+            print(f"DEBUG: LLM Response JSON:\n{json.dumps(result, indent=2)}")
+        except json.JSONDecodeError:
+            # Fallback if model doesn't return valid JSON
+            return ChatResponse(
+                response=content,
+                focused_nodes=[]
+            )
         
         valid_ids = set(n['id'] for n in GRAPH_DATA['nodes'])
         safe_focused = [nid for nid in result.get("focused_nodes", []) if nid in valid_ids]
@@ -272,8 +333,11 @@ Example JSON:
         
     except Exception as e:
         print(f"LLM Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return ChatResponse(
+            response=f"**Error**: Failed to contact AI provider. ({str(e)})",
+            focused_nodes=[]
+        )
 
 if __name__ == "__main__":
-    print("Starting NanoChat Bridge on http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print("Starting NanoChat Bridge on http://localhost:8999")
+    uvicorn.run(app, host="0.0.0.0", port=8999)

@@ -251,6 +251,9 @@ class CodeIndexer:
             
             status = "defined" if cid in self.concepts else ("external" if is_external else "missing")
             
+            # Check if this concept is referenced as a visualization
+            viz_ref = next((r for r in self.refs if r.concept_id == cid and r.type == 'viz'), None)
+            
             node_data = {
                 "id": f"concept:{cid}",
                 "type": "concept",
@@ -260,6 +263,9 @@ class CodeIndexer:
             }
             if library:
                 node_data["library"] = library
+            
+            if viz_ref:
+                node_data["viz_id"] = cid
                 
             nodes.append(node_data)
 

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "generate-graph": "cd ../.. && uv run scripts/generate_code_index.py && cp knowledge_graph.json docs/viewer/public/ && mkdir -p docs/viewer/public/kb && cp -r docs/knowledge_base/* docs/viewer/public/kb/ && mkdir -p docs/viewer/public/code/nanochat && cp nanochat/*.py docs/viewer/public/code/nanochat/",
-    "start-bridge": "cd ../.. && uv run --with fastapi --with uvicorn --with openai --with python-dotenv --with sentence-transformers --with lancedb --with numpy scripts/bridge.py",
+    "start-bridge": "cd ../.. && uv run --with fastapi --with uvicorn --with openai --with python-dotenv --with sentence-transformers --with lancedb --with numpy --with requests scripts/bridge.py",
     "dev": "bun run generate-graph && vite",
     "build": "bun run generate-graph && vite build",
     "lint": "eslint .",

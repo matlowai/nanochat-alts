@@ -29,30 +29,52 @@ This document tracks the remaining work to transform `nanochat` into a "Zero to 
 ## 🟠 Phase 2: Visualization Engine
 *Goal: Make the "Concept Panel" alive with interactive graphics.*
 
-- [ ] **Viz Infrastructure**:
-    - [ ] Create `docs/viewer/src/viz/` registry.
-    - [ ] Implement `<VizContainer />` component in React.
+- [x] **Viz Infrastructure**:
+    - [x] Create `docs/viewer/src/viz/` registry.
+    - [x] Implement `<VizContainer />` component in React.
 - [ ] **Core Visualizations**:
-    - [ ] **Matrix Multiplication**: Interactive dot product visualizer.
-    - [ ] **Softmax**: Sliders to show how temperature affects probabilities.
+    - [x] **Matrix Multiplication**:
+        - [x] Placeholder component.
+        - [x] Interactive Grid View (HTML/CSS).
+        - [x] Hover effects to show Row x Col = Cell.
+    - [x] **Softmax**:
+        - [x] Bar chart of Logits vs Probabilities.
+        - [x] Temperature Slider.
     - [ ] **Attention Pattern**: Heatmap showing token-to-token affinity.
     - [ ] **RoPE Rotation**: 2D circle animation of rotating vectors.
 - [ ] **Integration**:
-    - [ ] Update `App.jsx` to render visualizations when `@viz` tags are clicked.
+    - [x] Update `App.jsx` to render visualizations when `@viz` tags are clicked.
 
-## 🟡 Phase 3: Activation Tracing (The "Magic")
+## 🟡 Phase 3: Chat Agent & RAG 💬
+*Goal: A helpful AI pair programmer that knows the codebase.*
+
+- [ ] **Basic Chat Integration**:
+    - [x] **Fix Bridge Endpoint**: Debug 500 error on `/chat`.
+    - [x] **OpenRouter Setup**: Ensure API key is loaded correctly.
+    - [x] **Model Selector**: Dropdown to pick free models (fix 429 errors).
+    - [x] **Adaptive System Prompt**: Detect user expertise and guide new users.
+    - [x] **Welcome Message**: Initial greeting to prompt user interaction.
+    - [x] **Settings Menu**: Manual API Key entry + OpenRouter OAuth login.
+- [ ] **RAG Integration**:
+    - [ ] **Context Retrieval**: Query LanceDB for relevant nodes.
+    - [ ] **Prompt Engineering**: Inject retrieved context into the system prompt.
+    - [ ] **Citations**: Show which files/concepts were used to answer.
+- [ ] **Tool Use (Future)**:
+    - [ ] **Code Execution**: Allow agent to run snippets via `/execute`.
+    - [ ] **Graph Navigation**: Allow agent to highlight nodes in the UI.
+
+## 🔵 Phase 4: Activation Tracing (The "Magic")
 *Goal: Visualize the actual data flowing through the model.*
 
 - [ ] **Python Backend**:
     - [ ] Implement `TraceContext` manager in `nanochat/utils.py`.
     - [ ] Add hook support to `GPT` model.
-    - [ ] Create `/trace` endpoint in `bridge.py` to run a prompt and return activations.
+    - [ ] Create `/trace` endpoint in `bridge.py`.
 - [ ] **Frontend Viewer**:
     - [ ] Add "Trace Mode" to the viewer.
-    - [ ] Visualize attention scores from the trace on the graph or code view.
-    - [ ] Show token generation step-by-step.
+    - [ ] Visualize attention scores.
 
-## 🟢 Phase 4: Polish & Deployment
+## 🟢 Phase 5: Polish & Deployment
 *Goal: Make it ready for public consumption.*
 
 - [ ] **UI/UX**:

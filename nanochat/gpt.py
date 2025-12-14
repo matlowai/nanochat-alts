@@ -307,6 +307,7 @@ class GPT(nn.Module):
                 logits[logits < v[:, [-1]]] = -float('Inf')
             if temperature > 0:
                 logits = logits / temperature
+                # @viz:optimization.softmax
                 probs = F.softmax(logits, dim=-1)
                 next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
             else:

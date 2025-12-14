@@ -26,3 +26,6 @@ GAP_REPORT.md
 dev-ignore/
 report.md
 eval_bundle/
+
+# Database
+.lancedb/

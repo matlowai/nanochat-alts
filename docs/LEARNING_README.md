@@ -55,6 +55,6 @@ You need to configure API keys for the AI features to work.
 
 ## 3. Troubleshooting
 
-- **Bridge Connection Failed**: Ensure `bun run start-bridge` is running on port 8000.
+- **Bridge Connection Failed**: Ensure `bun run start-bridge` is running on port 8999.
 - **Model Download Error**: Check your `HF_TOKEN` in `.env`.
 - **Chat Error**: Check your `OPENROUTER_API_KEY` and ensure you have credits (or are using a free model).
