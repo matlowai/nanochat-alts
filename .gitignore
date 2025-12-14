@@ -1,7 +1,28 @@
 .venv/
+# Python
 __pycache__/
 *.pyc
+.venv/
+.env
+
+# Node / JS
+node_modules/
+dist/
+.bun/
+bun.lockb
+bun.lock
+package-lock.json
+yarn.lock
+
+# Rust
 rustbpe/target/
+
+# Generated Educational Artifacts
+knowledge_graph.json
+GAP_REPORT.md
+
+# System
+.DS_Store/target/
 dev-ignore/
 report.md
 eval_bundle/

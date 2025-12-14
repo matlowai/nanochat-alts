@@ -1,0 +1,370 @@
+body {
+  margin: 0;
+  overflow: hidden;
+  background-color: #0f172a;
+  color: white;
+  font-family: 'Inter', sans-serif;
+}
+
+.app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+.sidebar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 450px;
+  /* Increased width for code */
+  height: 100%;
+  background: #1e293b;
+  border-left: 1px solid #334155;
+  padding: 20px;
+  box-shadow: -5px 0 15px rgba(0, 0, 0, 0.3);
+  transition: transform 0.3s ease;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  flex-shrink: 0;
+}
+
+.sidebar-header h2 {
+  margin: 0;
+  font-size: 1.2rem;
+  word-break: break-all;
+}
+
+.sidebar-header button {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.sidebar-header button:hover {
+  color: white;
+}
+
+.sidebar-content {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  align-self: flex-start;
+}
+
+.node-id {
+  font-family: monospace;
+  color: #94a3b8;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+}
+
+.code-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.code-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.run-btn {
+  background-color: #22c55e;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background-color 0.2s;
+}
+
+.run-btn:hover {
+  background-color: #16a34a;
+}
+
+.run-btn:disabled {
+  background-color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.execution-output {
+  background-color: #0f172a;
+  border-radius: 4px;
+  padding: 10px;
+  border: 1px solid #334155;
+  margin-bottom: 10px;
+}
+
+.execution-output.error {
+  border-color: #ef4444;
+}
+
+.execution-output h4 {
+  margin: 0 0 5px 0;
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+.stdout {
+  color: #e2e8f0;
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: monospace;
+}
+
+/* ... existing styles ... */
+
+.chat-toggle {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s;
+  z-index: 100;
+}
+
+.chat-toggle:hover {
+  transform: scale(1.1);
+}
+
+.chat-panel {
+  position: absolute;
+  bottom: 80px;
+  left: 20px;
+  width: 350px;
+  height: 500px;
+  background-color: #1e293b;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #334155;
+  z-index: 100;
+}
+
+.chat-header {
+  background-color: #0f172a;
+  padding: 10px 15px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #334155;
+}
+
+.chat-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.chat-header button {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.chat-messages {
+  flex-grow: 1;
+  padding: 15px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message {
+  padding: 8px 12px;
+  border-radius: 8px;
+  max-width: 85%;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.message.user {
+  background-color: #3b82f6;
+  color: white;
+  align-self: flex-end;
+}
+
+.message.assistant {
+  background-color: #334155;
+  color: #e2e8f0;
+  align-self: flex-start;
+}
+
+.message p {
+  margin: 0;
+}
+
+.chat-input {
+  padding: 10px;
+  background-color: #0f172a;
+  display: flex;
+  gap: 10px;
+  border-top: 1px solid #334155;
+}
+
+.chat-input input {
+  flex-grow: 1;
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 8px;
+  color: white;
+  outline: none;
+}
+
+.chat-input input:focus {
+  border-color: #3b82f6;
+}
+
+.chat-input button {
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  width: 36px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-input button:disabled {
+  background-color: #94a3b8;
+  cursor: not-allowed;
+}
+
+/* Help Button & Modal */
+.help-toggle {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: #475569;
+  color: white;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s;
+  z-index: 100;
+}
+
+.help-toggle:hover {
+  transform: scale(1.1);
+  background-color: #64748b;
+}
+
+.help-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.help-modal {
+  background-color: #1e293b;
+  width: 500px;
+  max-width: 90%;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.help-header {
+  background-color: #0f172a;
+  padding: 15px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #334155;
+}
+
+.help-header h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  color: #f8fafc;
+}
+
+.help-header button {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.help-content {
+  padding: 20px;
+  color: #e2e8f0;
+  line-height: 1.6;
+}
+
+.help-content code {
+  background-color: #334155;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
+.help-content pre {
+  background-color: #0f172a;
+  padding: 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 10px 0;
+  border: 1px solid #334155;
+}
+
+.help-content ol {
+  padding-left: 20px;
+}
+
+.help-content li {
+  margin-bottom: 10px;
+}
