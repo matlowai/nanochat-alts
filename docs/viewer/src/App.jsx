@@ -195,12 +195,25 @@ function App() {
 
     svg.selectAll("*").remove(); // Clear previous
 
+    // Create a root container for zooming
+    const g = svg.append('g');
+
+    // Define Zoom Behavior
+    const zoom = d3.zoom()
+      .scaleExtent([0.1, 4])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform);
+      });
+
+    // Attach zoom to SVG
+    svg.call(zoom);
+
     const simulation = d3.forceSimulation(data.nodes)
       .force('link', d3.forceLink(data.links).id(d => d.id).distance(100))
       .force('charge', d3.forceManyBody().strength(-300))
       .force('center', d3.forceCenter(width / 2, height / 2));
 
-    const link = svg.append('g')
+    const link = g.append('g')
       .attr('stroke', '#999')
       .attr('stroke-opacity', 0.6)
       .selectAll('line')
@@ -208,7 +221,7 @@ function App() {
       .join('line')
       .attr('stroke-width', d => Math.sqrt(d.value || 1));
 
-    const node = svg.append('g')
+    const node = g.append('g')
       .attr('stroke', '#fff')
       .attr('stroke-width', 1.5)
       .selectAll('circle')
@@ -228,6 +241,8 @@ function App() {
       .text(d => d.label);
 
     node.on('click', (event, d) => {
+      // Stop propagation so zoom doesn't catch it (optional)
+      event.stopPropagation();
       setSelectedNode(d);
       setSidebarOpen(true);
     });
@@ -243,25 +258,6 @@ function App() {
         .attr('cx', d => d.x)
         .attr('cy', d => d.y);
     });
-
-    // Re-run simulation/update attributes when highlightedNodes changes
-    useEffect(() => {
-      const svg = d3.select(svgRef.current);
-      const nodes = svg.selectAll('circle');
-
-      nodes
-        .attr('r', d => highlightedNodes.has(d.id) ? 8 : 5)
-        .attr('fill', d => {
-          if (highlightedNodes.has(d.id)) return '#facc15'; // Yellow highlight
-          if (d.type === 'file') return '#3b82f6';
-          if (d.status === 'missing') return '#ef4444';
-          if (d.status === 'external') return '#a855f7';
-          return '#22c55e';
-        })
-        .attr('stroke', d => highlightedNodes.has(d.id) ? '#fff' : '#fff')
-        .attr('stroke-width', d => highlightedNodes.has(d.id) ? 2.5 : 1.5);
-
-    }, [highlightedNodes, data]); // Trigger update when highlights change
 
     function drag(simulation) {
       function dragstarted(event) {
@@ -286,7 +282,32 @@ function App() {
         .on('drag', dragged)
         .on('end', dragended);
     }
+
+    // Store zoom behavior on the SVG node for external access
+    svg.node().__zoomBehavior = zoom;
+
   }, [data]); // Only re-run full simulation on data change
+
+  // Re-run simulation/update attributes when highlightedNodes changes
+  useEffect(() => {
+    const svg = d3.select(svgRef.current);
+    // Select the 'g' inside the root 'g' (since we added a wrapper)
+    // Actually, we can just select all circles under the SVG
+    const nodes = svg.selectAll('circle');
+
+    nodes
+      .attr('r', d => highlightedNodes.has(d.id) ? 8 : 5)
+      .attr('fill', d => {
+        if (highlightedNodes.has(d.id)) return '#facc15'; // Yellow highlight
+        if (d.type === 'file') return '#3b82f6';
+        if (d.status === 'missing') return '#ef4444';
+        if (d.status === 'external') return '#a855f7';
+        return '#22c55e';
+      })
+      .attr('stroke', d => highlightedNodes.has(d.id) ? '#fff' : '#fff')
+      .attr('stroke-width', d => highlightedNodes.has(d.id) ? 2.5 : 1.5);
+
+  }, [highlightedNodes, data]); // Trigger update when highlights change
 
   const handleFocusNode = (node) => {
     if (!node) return;
@@ -312,18 +333,18 @@ function App() {
     const width = window.innerWidth;
     const height = window.innerHeight;
 
-    // We need to access the current transform to maintain scale or set a new one
-    // Ideally, we transition to center the node
+    // Retrieve the zoom behavior we stored
+    const zoom = svg.node().__zoomBehavior;
+    if (!zoom) return;
+
     const transform = d3.zoomIdentity
       .translate(width / 2, height / 2)
-      .scale(1.5) // Zoom in a bit
+      .scale(1.5)
       .translate(-node.x, -node.y);
 
     svg.transition()
       .duration(750)
-      .call(d3.zoom().transform, transform); // Note: this might conflict if zoom behavior isn't attached to svg yet.
-    // Actually, we haven't attached zoom behavior to the SVG in the main useEffect.
-    // We should probably add zoom support to the main graph first for this to work properly.
+      .call(zoom.transform, transform);
   };
 
   return (
