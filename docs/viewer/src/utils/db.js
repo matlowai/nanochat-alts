@@ -72,6 +72,9 @@ export async function getOrCreateGuestUser() {
 }
 
 // =========== LEARNER PROFILE FUNCTIONS ===========
+// DESIGN: Hybrid profile updates
+// - Light updates: Every turn, track topics/turn count (NO LLM)
+// - Heavy updates: Every 10 turns, reassess expertise (LLM call)
 
 export async function getLearnerProfile(userId) {
     return await db.learnerProfiles.where('userId').equals(userId).first();
@@ -81,6 +84,84 @@ export async function updateLearnerProfile(userId, updates) {
     const now = new Date().toISOString();
     return await db.learnerProfiles.where('userId').equals(userId).modify({
         ...updates,
+        updatedAt: now
+    });
+}
+
+/**
+ * Light profile update - called every turn, NO LLM call
+ * @param {number} userId 
+ * @param {string[]} focusedNodes - nodes discussed this turn
+ * @returns {object} { turnCount, needsHeavyUpdate }
+ */
+export async function lightProfileUpdate(userId, focusedNodes = []) {
+    const profile = await getLearnerProfile(userId);
+    if (!profile) return { turnCount: 0, needsHeavyUpdate: false };
+
+    const now = new Date().toISOString();
+
+    // Get current topics or initialize
+    const currentTopics = profile.topics || {};
+
+    // Add/update topics from focused nodes
+    const today = new Date().toISOString().split('T')[0];
+    for (const node of focusedNodes) {
+        // Extract concept name (e.g., "concept:mlp" -> "mlp")
+        const topicName = node.includes(':') ? node.split(':').pop() : node;
+        if (!currentTopics[topicName]) {
+            currentTopics[topicName] = { confidence: 0.1, last_discussed: today, mentions: 1 };
+        } else {
+            currentTopics[topicName].last_discussed = today;
+            currentTopics[topicName].mentions = (currentTopics[topicName].mentions || 0) + 1;
+        }
+    }
+
+    // Increment turn count
+    const newTurnCount = (profile.turnCount || 0) + 1;
+    const lastHeavyUpdate = profile.lastHeavyUpdateTurn || 0;
+
+    // Check if heavy update needed (every 10 turns)
+    const needsHeavyUpdate = (newTurnCount - lastHeavyUpdate) >= 10;
+
+    // Update profile
+    await db.learnerProfiles.where('userId').equals(userId).modify({
+        topics: currentTopics,
+        turnCount: newTurnCount,
+        lastActiveAt: now,
+        updatedAt: now
+    });
+
+    return { turnCount: newTurnCount, needsHeavyUpdate };
+}
+
+/**
+ * Apply heavy profile updates from LLM analysis
+ * @param {number} userId 
+ * @param {object} updates - LLM-generated profile updates
+ */
+export async function applyHeavyProfileUpdate(userId, updates) {
+    const profile = await getLearnerProfile(userId);
+    if (!profile) return;
+
+    const now = new Date().toISOString();
+
+    // Merge topic updates with existing
+    const currentTopics = profile.topics || {};
+    if (updates.topics) {
+        for (const [topic, data] of Object.entries(updates.topics)) {
+            if (currentTopics[topic]) {
+                currentTopics[topic] = { ...currentTopics[topic], ...data };
+            } else {
+                currentTopics[topic] = data;
+            }
+        }
+    }
+
+    await db.learnerProfiles.where('userId').equals(userId).modify({
+        expertise_level: updates.expertise_level || profile.expertise_level,
+        topics: currentTopics,
+        learning_style: updates.learning_style || profile.learning_style,
+        lastHeavyUpdateTurn: profile.turnCount || 0,
         updatedAt: now
     });
 }

@@ -276,6 +276,7 @@ class ChatRequest(BaseModel):
     context_settings: Optional[dict] = None
     conversation_memory: Optional[dict] = None  # {fullTurns, summaryTurns}
     injected_context: Optional[List[dict]] = None  # [{id, content}] for rehydrated turns
+    request_heavy_update: bool = False  # Trigger LLM-based profile assessment
 
 class ChatResponse(BaseModel):
     response: str
@@ -414,6 +415,67 @@ async def compress_segments(request: CompressRequest, authorization: Optional[st
 # 2. NO hardcoded models - Always use request.model for ALL LLM calls.
 # 3. NO content truncation - Show full docstrings, full conversation history.
 # 4. Use request.model for intent analysis, main chat, and any other LLM calls.
+
+async def assess_learner_progress(client, model: str, learner_profile: dict, conversation_history: list) -> dict:
+    """
+    Heavy profile update - LLM-based assessment of learner progress.
+    Called every 10 turns or on significant topic changes.
+    
+    Returns profile_updates dict with:
+    - expertise_level: beginner/intermediate/advanced
+    - topics: {topic: {confidence, last_discussed}}
+    - learning_style: optional insight
+    """
+    if not client:
+        return None
+    
+    # Build context from recent conversation
+    recent_turns = conversation_history[-10:] if len(conversation_history) > 10 else conversation_history
+    turns_text = "\n".join([f"{t.get('role', 'user')}: {t.get('content', '')[:500]}" for t in recent_turns])
+    
+    current_expertise = learner_profile.get('expertise_level', 'beginner') if learner_profile else 'beginner'
+    current_topics = learner_profile.get('topics', {}) if learner_profile else {}
+    
+    assessment_prompt = f"""Analyze this learner's progress based on their conversation history.
+
+Current Profile:
+- Expertise Level: {current_expertise}
+- Topics Covered: {json.dumps(current_topics)}
+
+Recent Conversation:
+{turns_text}
+
+Return JSON with:
+{{
+  "expertise_level": "beginner" | "intermediate" | "advanced",
+  "topics": {{
+    "topic_name": {{"confidence": 0.0-1.0, "needs_review": true/false}}
+  }},
+  "learning_style": "prefers_code_examples" | "prefers_analogies" | "prefers_theory" | null
+}}
+
+Only include topics actually discussed. Base expertise on question depth and understanding shown."""
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": assessment_prompt}]
+        )
+        
+        content = response.choices[0].message.content.strip()
+        
+        # Parse JSON (handle markdown wrapping)
+        if content.startswith("```"):
+            content = content.split("```")[1]
+            if content.startswith("json"):
+                content = content[4:]
+        
+        result = json.loads(content)
+        print(f"DEBUG: Learner assessment result: {json.dumps(result, indent=2)}")
+        return result
+    except Exception as e:
+        print(f"DEBUG: Learner assessment failed: {e}")
+        return None
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)):
@@ -699,10 +761,30 @@ Example JSON:
         # Filter relevant_nodes to ensure they are valid and not already in focused
         safe_context = [nid for nid in relevant_nodes if nid in valid_ids and nid not in safe_focused]
         
+        # ======== HEAVY PROFILE UPDATE (if requested) ========
+        profile_updates = None
+        if request.request_heavy_update:
+            print("DEBUG: Heavy profile update requested")
+            # Build conversation history from memory
+            conversation_history = []
+            if request.conversation_memory:
+                for turn in request.conversation_memory.get('fullTurns', []):
+                    conversation_history.append({'role': turn.get('role'), 'content': turn.get('content')})
+                for turn in request.conversation_memory.get('summaryTurns', []):
+                    conversation_history.append({'role': turn.get('role'), 'content': turn.get('summary')})
+            
+            profile_updates = await assess_learner_progress(
+                client, 
+                request.model, 
+                request.learner_profile, 
+                conversation_history
+            )
+        
         return ChatResponse(
             response=result.get("response", "I couldn't generate a response."),
             focused_nodes=safe_focused,
-            context_nodes=safe_context
+            context_nodes=safe_context,
+            profile_updates=profile_updates
         )
         
     except Exception as e:

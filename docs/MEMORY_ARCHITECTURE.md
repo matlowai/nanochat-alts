@@ -211,13 +211,51 @@ class ChatResponse(BaseModel):
 
 ---
 
-## Phase 6: Post-Turn Profile Updates
+## Phase 6: Post-Turn Profile Updates (Hybrid Approach)
+
+### Design Decision
+Instead of updating the profile after every turn (expensive) or only at session end (risky), 
+we use a **hybrid approach**:
+
+- **Light updates (every turn)**: Track topics/nodes mentioned, increment turn count. NO LLM call.
+- **Heavy updates (every 10-15 turns)**: LLM call to reassess expertise level, update confidence scores.
+
+### Light Updates (Every Turn)
+```js
+// Frontend tracks without LLM
+{
+  topicsMentioned: ["mlp", "attention"],  // Append from focused_nodes
+  turnCount: 12,                           // Increment
+  lastActiveAt: "2024-12-14T11:00:00Z"    // Update timestamp
+}
+```
+
+### Heavy Updates (Every 10-15 Turns or Session End)
+```python
+# Backend makes LLM call for deep analysis
+profile_updates = {
+  "expertise_level": "intermediate",  # Reassessed from conversation
+  "topics": {
+    "mlp": {"confidence": 0.7, "last_discussed": "2024-12-14"},
+    "attention": {"confidence": 0.5, "last_discussed": "2024-12-14"}
+  },
+  "learning_style": "prefers_code_examples"
+}
+```
+
+### Trigger Conditions for Heavy Update
+1. Turn count is divisible by 10 (every 10 turns)
+2. Topic change detected (e.g., switched from "tensors" to "attention")
+3. User explicitly indicates expertise change ("I actually know this already")
+4. Conversation ends (if detectable)
 
 ### Checklist
-- [ ] After response, call fast model for analysis
-- [ ] Return `profile_updates`
-- [ ] Frontend applies to IndexedDB
-- [ ] Toast: "Profile updated: mlp → 0.6"
+- [ ] Frontend: Track light stats (topics, turn count) every turn
+- [ ] Frontend: Check heavy update trigger conditions
+- [ ] Backend: Add `assess_learner_progress` function
+- [ ] Backend: Return `profile_updates` in ChatResponse when triggered
+- [ ] Frontend: Apply heavy updates to IndexedDB
+- [ ] Frontend: Toast notification on profile update
 
 ---
 

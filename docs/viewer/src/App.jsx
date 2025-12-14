@@ -13,7 +13,7 @@ import ChatHistory from './components/ChatHistory';
 import UserSelector from './components/UserSelector';
 import ContextInspector from './components/ContextInspector';
 import { exchangeCodeForKey } from './utils/auth';
-import { createConversation, getMessages, addMessage, getOrCreateGuestUser, getLearnerProfile, getContextSettings, buildConversationContext, saveTurnSummary } from './utils/db';
+import { createConversation, getMessages, addMessage, getOrCreateGuestUser, getLearnerProfile, getContextSettings, buildConversationContext, saveTurnSummary, lightProfileUpdate, applyHeavyProfileUpdate } from './utils/db';
 import './App.css';
 
 function App() {
@@ -48,6 +48,7 @@ function App() {
   const [currentUserId, setCurrentUserId] = useState(null);
   const [learnerProfile, setLearnerProfile] = useState(null);
   const [contextSettings, setContextSettings] = useState(null);
+  const [pendingHeavyUpdate, setPendingHeavyUpdate] = useState(false); // Triggers LLM profile assessment
 
   // Context Inspector State
   const [contextInspectorOpen, setContextInspectorOpen] = useState(false);
@@ -227,7 +228,8 @@ function App() {
           related_nodes: relatedNodeIds || [],
           learner_profile: learnerProfile,
           context_settings: contextSettings,
-          conversation_memory: conversationMemory
+          conversation_memory: conversationMemory,
+          request_heavy_update: pendingHeavyUpdate  // Trigger LLM profile assessment if needed
         })
       });
       const data = await res.json();
@@ -249,6 +251,38 @@ function App() {
         setRelatedNodeIds(data.context_nodes);
       } else {
         setRelatedNodeIds([]);
+      }
+
+      // ======== PROFILE UPDATES (Hybrid Approach) ========
+      // Light update: Every turn, track topics (NO LLM call)
+      // Heavy update: Every 10 turns, reassess expertise (LLM call from backend)
+      if (currentUserId) {
+        try {
+          const { turnCount, needsHeavyUpdate } = await lightProfileUpdate(
+            currentUserId,
+            data.focused_nodes || []
+          );
+          console.log(`Profile light update: turn ${turnCount}, heavy needed: ${needsHeavyUpdate}`);
+
+          // Apply heavy updates if backend returned them
+          if (data.profile_updates) {
+            await applyHeavyProfileUpdate(currentUserId, data.profile_updates);
+            console.log('Profile heavy update applied:', data.profile_updates);
+            // Refresh learner profile state
+            const updated = await getLearnerProfile(currentUserId);
+            setLearnerProfile(updated);
+            // Reset pending flag since we just processed updates
+            setPendingHeavyUpdate(false);
+          }
+
+          // Queue heavy update for next request if needed
+          if (needsHeavyUpdate && !pendingHeavyUpdate) {
+            console.log('Queuing heavy profile update for next turn');
+            setPendingHeavyUpdate(true);
+          }
+        } catch (profileErr) {
+          console.error('Profile update error:', profileErr);
+        }
       }
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }]);
