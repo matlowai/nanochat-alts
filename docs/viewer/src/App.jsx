@@ -12,6 +12,7 @@ import FocusList from './components/FocusList';
 import ChatHistory from './components/ChatHistory';
 import UserSelector from './components/UserSelector';
 import ContextInspector from './components/ContextInspector';
+import { ToastContainer } from './components/Toast';
 import { exchangeCodeForKey } from './utils/auth';
 import { createConversation, getMessages, addMessage, getOrCreateGuestUser, getLearnerProfile, getContextSettings, buildConversationContext, saveTurnSummary, lightProfileUpdate, applyHeavyProfileUpdate } from './utils/db';
 import './App.css';
@@ -69,6 +70,14 @@ function App() {
   // API Key State
   const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('userApiKey'));
   const [keyType, setKeyType] = useState(() => localStorage.getItem('keyType')); // 'manual' or 'oauth'
+
+  // Toast notifications
+  const [toasts, setToasts] = useState([]);
+  const addToast = (message, type = 'success', duration = 3000) => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type, duration }]);
+  };
+  const removeToast = (id) => setToasts(prev => prev.filter(t => t.id !== id));
 
   // Handle OAuth Callback
   useEffect(() => {
@@ -274,6 +283,8 @@ function App() {
             setLearnerProfile(updated);
             // Reset pending flag since we just processed updates
             setPendingHeavyUpdate(false);
+            // Show toast notification
+            addToast(`Profile updated: ${data.profile_updates.expertise_level || 'progress tracked'}`, 'success');
           }
 
           // Queue heavy update for next request if needed
@@ -662,6 +673,9 @@ function App() {
   return (
     <div className="app">
       <svg ref={svgRef}></svg>
+
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
 
       {/* Focus List */}
       <FocusList
