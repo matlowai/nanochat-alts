@@ -127,30 +127,55 @@ db.version(2).stores({
 ┌─────────────────────────────────────────────────────────────────┐
 │  📋 Context Inspector                    [Budget: 45k/100k]     │
 ├─────────────────────────────────────────────────────────────────┤
-│  ▼ System Prompt                                   [2,100 tok]  │
+│  ☑ System Prompt                                   [2,100 tok]  │
 │    You are 'NanoChat'...                                        │
-│    [Edit] [Compress]                                            │
+│    [Edit] [View Full]                                           │
 │                                                                  │
-│  ▼ Learner Profile                                   [450 tok]  │
+│  ☑ Learner Profile                                   [450 tok]  │
 │    Expertise: beginner | Topics: tensors (0.8)                  │
 │    [Edit]                                                       │
 │                                                                  │
-│  ▼ Viewing: nanochat/gpt.py                        [3,200 tok]  │
+│  ☑ Viewing: nanochat/gpt.py                        [3,200 tok]  │
 │    class GPT(nn.Module): ...                                    │
-│    [Edit] [Compress] [Remove]                                   │
+│    [Edit] [View Full] [Skip]                                    │
 │                                                                  │
-│  ▼ Turn 1 (full)                                   [1,200 tok]  │
+│  ☑ Turn 1 (full)                                   [1,200 tok]  │
 │    User: "what is MLP?"                                         │
 │    Assistant: "An MLP is..."                                    │
+│    [Compact] [Skip] [View Full] [Copy to Prompt]                │
 │                                                                  │
-│  ▶ Turn 0 (summary)                                  [80 tok]   │
+│  ☐ Turn 0 (compacted)                                [80 tok]   │
 │    Greeted user, asked about experience                         │
-│    [Expand Full] [Remove]                                       │
+│    [Rehydrate Full] [Copy to Prompt]                            │
 │                                                                  │
 ├─────────────────────────────────────────────────────────────────┤
-│  [⚙️ Settings]                            [✉️ Send with Context] │
+│  Compression Prompt (optional):                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │ Focus on technical concepts, drop greetings                 ││
+│  └─────────────────────────────────────────────────────────────┘│
+│  [🗜️ Compress Checked]                    [✉️ Send with Context] │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Compression & Rehydration
+
+**Per-Turn Controls:**
+- ☑ **Checkbox**: Include in context (checked) or exclude
+- **[Compact]**: Compress to ~50% using LLM with preset prompt
+- **[Skip]**: Reduce to 1-line summary only
+- **[View Full]**: Show original uncompressed text
+- **[Rehydrate Full]**: Pull full text back from IndexedDB
+- **[Copy to Prompt]**: Insert text into current message
+
+**Compression Prompt:**
+- Optional text field for steering (e.g., "Focus on code, drop pleasantries")
+- Default preset used if empty: "Summarize preserving technical details"
+- Applied to all checked items when [Compress Checked] clicked
+
+**Rehydration:**
+- Each turn stores `messageId` link to full text in IndexedDB
+- [Rehydrate Full] fetches original and replaces compacted version
+- Useful for digging into specific past context
 
 ---
 
