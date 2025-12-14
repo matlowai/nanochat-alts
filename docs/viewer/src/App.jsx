@@ -64,6 +64,7 @@ function App() {
   const [selectedModel, setSelectedModel] = useState(() => {
     return localStorage.getItem('selectedModel') || "google/gemini-2.0-flash-exp:free";
   });
+  const [availableModels, setAvailableModels] = useState([]); // For settings compression model selector
 
   // API Key State
   const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('userApiKey'));
@@ -689,6 +690,15 @@ function App() {
         onSaveKey={handleSaveKey}
         currentKey={userApiKey}
         keyType={keyType}
+        contextSettings={contextSettings}
+        onUpdateContextSettings={async (updates) => {
+          setContextSettings(updates);
+          if (currentUserId) {
+            const { updateContextSettings } = await import('./utils/db');
+            await updateContextSettings(currentUserId, updates);
+          }
+        }}
+        models={availableModels}
       />
 
       {/* Help Toggle Button */}
@@ -783,7 +793,11 @@ function App() {
 
           {/* Model Selector */}
           <div style={{ padding: '10px 15px 0 15px' }}>
-            <ModelSelector selectedModel={selectedModel} onSelectModel={setSelectedModel} />
+            <ModelSelector
+              selectedModel={selectedModel}
+              onSelectModel={setSelectedModel}
+              onModelsLoaded={setAvailableModels}
+            />
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', padding: '15px', display: 'flex', flexDirection: 'column', gap: '10px' }}>

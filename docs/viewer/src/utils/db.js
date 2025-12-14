@@ -54,9 +54,8 @@ export async function createUser(name) {
         context_budget_max_tokens: 100000,
         tier1_full_text_turns: 3,
         tier2_summary_turns: 12,
-        file_content_max_chars: 5000,
         auto_summarize: true,
-        show_context_preview: false
+        compression_model: null
     });
 
     return userId;
@@ -178,9 +177,8 @@ export async function getContextSettings(userId) {
             context_budget_max_tokens: 100000,
             tier1_full_text_turns: 3,
             tier2_summary_turns: 12,
-            file_content_max_chars: 5000,
             auto_summarize: true,
-            show_context_preview: false
+            compression_model: null
         });
         settings = await db.contextSettings.where('userId').equals(userId).first();
     }

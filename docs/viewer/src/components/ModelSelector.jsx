@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChevronDown, Search, Check } from 'lucide-react';
 
-const ModelSelector = ({ selectedModel, onSelectModel }) => {
+const ModelSelector = ({ selectedModel, onSelectModel, onModelsLoaded }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [models, setModels] = useState([]);
     const [search, setSearch] = useState('');
@@ -17,6 +17,11 @@ const ModelSelector = ({ selectedModel, onSelectModel }) => {
                 const data = await res.json();
                 const loadedModels = data.models || [];
                 setModels(loadedModels);
+
+                // Expose models to parent if callback provided
+                if (onModelsLoaded) {
+                    onModelsLoaded(loadedModels);
+                }
 
                 // Validate selectedModel
                 if (loadedModels.length > 0) {
@@ -35,7 +40,7 @@ const ModelSelector = ({ selectedModel, onSelectModel }) => {
             }
         };
         fetchModels();
-    }, [selectedModel, onSelectModel]);
+    }, [selectedModel, onSelectModel, onModelsLoaded]);
 
     // Close dropdown when clicking outside
     useEffect(() => {
