@@ -10,8 +10,10 @@ import ModelSelector from './components/ModelSelector';
 import SettingsModal from './components/SettingsModal';
 import FocusList from './components/FocusList';
 import ChatHistory from './components/ChatHistory';
+import UserSelector from './components/UserSelector';
+import ContextInspector from './components/ContextInspector';
 import { exchangeCodeForKey } from './utils/auth';
-import { createConversation, getMessages, addMessage } from './utils/db';
+import { createConversation, getMessages, addMessage, getOrCreateGuestUser, getLearnerProfile, getContextSettings, buildConversationContext, saveTurnSummary } from './utils/db';
 import './App.css';
 
 function App() {
@@ -41,6 +43,16 @@ function App() {
 
   // Chat History State
   const [currentConversationId, setCurrentConversationId] = useState(null);
+
+  // User Profile State
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [learnerProfile, setLearnerProfile] = useState(null);
+  const [contextSettings, setContextSettings] = useState(null);
+
+  // Context Inspector State
+  const [contextInspectorOpen, setContextInspectorOpen] = useState(false);
+  const [contextSegments, setContextSegments] = useState([]);
+  const [tokenBudget, setTokenBudget] = useState({ used: 0, total: 100000 });
 
   // Draggable Chat State
   const [chatPosition, setChatPosition] = useState({ x: 100, y: window.innerHeight - 580 });
@@ -105,6 +117,19 @@ function App() {
       .then(d => setConceptGraph(d))
       .catch(() => console.log('No concept graph found'));
   }, []);
+
+  // Load user profile when user changes
+  useEffect(() => {
+    const loadUserData = async () => {
+      if (currentUserId) {
+        const profile = await getLearnerProfile(currentUserId);
+        const settings = await getContextSettings(currentUserId);
+        setLearnerProfile(profile);
+        setContextSettings(settings);
+      }
+    };
+    loadUserData();
+  }, [currentUserId]);
 
   useEffect(() => {
     if (selectedNode) {
@@ -176,12 +201,15 @@ function App() {
     // Ensure we have a conversation
     let convoId = currentConversationId;
     if (!convoId) {
-      convoId = await createConversation(inputMessage.substring(0, 50) || 'New Chat');
+      convoId = await createConversation(inputMessage.substring(0, 50) || 'New Chat', currentUserId);
       setCurrentConversationId(convoId);
     }
 
     // Save user message to IndexedDB
     await addMessage(convoId, 'user', inputMessage);
+
+    // Build tiered conversation memory
+    const conversationMemory = await buildConversationContext(convoId, contextSettings);
 
     try {
       const headers = { 'Content-Type': 'application/json' };
@@ -196,7 +224,10 @@ function App() {
           message: inputMessage,
           model: selectedModel,
           viewing_node: selectedNode?.id || null,
-          related_nodes: relatedNodeIds || []
+          related_nodes: relatedNodeIds || [],
+          learner_profile: learnerProfile,
+          context_settings: contextSettings,
+          conversation_memory: conversationMemory
         })
       });
       const data = await res.json();
@@ -205,7 +236,7 @@ function App() {
       setMessages(prev => [...prev, botMsg]);
 
       // Save assistant message to IndexedDB
-      await addMessage(convoId, 'assistant', data.response);
+      const msgId = await addMessage(convoId, 'assistant', data.response);
 
       // Handle focus
       if (data.focused_nodes && data.focused_nodes.length > 0) {
@@ -224,6 +255,98 @@ function App() {
     } finally {
       setIsChatting(false);
     }
+  };
+
+  // Build context segments for Context Inspector
+  const buildContextSegments = async () => {
+    const segments = [];
+
+    // System prompt segment
+    segments.push({
+      id: 'system_prompt',
+      label: 'System Prompt',
+      type: 'system',
+      content: 'NanoChat educational AI assistant with knowledge graph context...',
+      tokenCount: 2000,
+      included: true,
+      isCompacted: false
+    });
+
+    // Learner profile segment
+    if (learnerProfile) {
+      const profileContent = `Expertise: ${learnerProfile.expertise_level || 'beginner'}\nTopics: ${JSON.stringify(learnerProfile.topics || {})}`;
+      segments.push({
+        id: 'learner_profile',
+        label: 'Learner Profile',
+        type: 'profile',
+        content: profileContent,
+        tokenCount: Math.ceil(profileContent.length / 4),
+        included: true,
+        isCompacted: false
+      });
+    }
+
+    // Current viewing context
+    if (selectedNode) {
+      const nodeContent = `Viewing: ${selectedNode.id}\nType: ${selectedNode.type}\nDocstring: ${selectedNode.docstring || 'N/A'}`;
+      segments.push({
+        id: 'viewing_context',
+        label: `Viewing: ${selectedNode.label || selectedNode.id}`,
+        type: 'viewing',
+        content: nodeContent,
+        tokenCount: Math.ceil(nodeContent.length / 4),
+        included: true,
+        isCompacted: false
+      });
+    }
+
+    // Conversation memory
+    if (currentConversationId) {
+      const memory = await buildConversationContext(currentConversationId, contextSettings);
+
+      // Full text turns
+      memory.fullTurns.forEach((turn, i) => {
+        segments.push({
+          id: `turn_full_${turn.id}`,
+          label: `Turn ${i + 1} (${turn.role}) - full`,
+          type: 'turn',
+          content: turn.content,
+          tokenCount: turn.tokenCount || Math.ceil(turn.content.length / 4),
+          included: true,
+          isCompacted: false,
+          originalContent: turn.content,
+          originalTokenCount: turn.tokenCount
+        });
+      });
+
+      // Summary turns
+      memory.summaryTurns.forEach((turn, i) => {
+        segments.push({
+          id: `turn_summary_${turn.id}`,
+          label: `Turn ${memory.fullTurns.length + i + 1} (${turn.role}) - summary`,
+          type: 'turn',
+          content: turn.summary,
+          tokenCount: turn.tokenCount || 20,
+          included: true,
+          isCompacted: true
+        });
+      });
+    }
+
+    return segments;
+  };
+
+  // Open Context Inspector with current context
+  const openContextInspector = async () => {
+    const segments = await buildContextSegments();
+    setContextSegments(segments);
+
+    // Calculate token budget
+    const totalUsed = segments.filter(s => s.included).reduce((sum, s) => sum + s.tokenCount, 0);
+    const budgetMax = contextSettings?.context_budget_max_tokens || 100000;
+    setTokenBudget({ used: totalUsed, total: budgetMax });
+
+    setContextInspectorOpen(true);
   };
 
   // Drag handlers for chat window
@@ -558,6 +681,12 @@ function App() {
         onNewChat={handleNewChat}
       />
 
+      {/* User Profile Selector */}
+      <UserSelector
+        currentUserId={currentUserId}
+        onUserChange={setCurrentUserId}
+      />
+
       {/* Chat Toggle Button */}
       <button className="chat-toggle" onClick={() => setChatOpen(!chatOpen)} style={{ left: '100px' }}>
         <MessageSquare size={24} />
@@ -636,6 +765,13 @@ function App() {
               placeholder="Ask about the code..."
               style={{ flex: 1, padding: '8px 12px', borderRadius: '8px', border: '1px solid #475569', background: '#334155', color: 'white', fontSize: '14px' }}
             />
+            <button
+              className="ci-toggle-btn"
+              onClick={openContextInspector}
+              title="Open Context Inspector"
+            >
+              📋
+            </button>
             <button onClick={handleSendMessage} disabled={isChatting} style={{ background: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px', padding: '8px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Send size={18} />
             </button>
@@ -771,6 +907,23 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Context Inspector Modal */}
+      <ContextInspector
+        isOpen={contextInspectorOpen}
+        onClose={() => setContextInspectorOpen(false)}
+        contextSegments={contextSegments}
+        onSegmentsChange={setContextSegments}
+        tokenBudget={tokenBudget}
+        onSend={() => {
+          setContextInspectorOpen(false);
+          handleSendMessage();
+        }}
+        onCompress={(segments, prompt) => {
+          // TODO: Implement LLM compression in Phase 8.5
+          console.log('Compress:', segments.length, 'segments with prompt:', prompt);
+        }}
+      />
     </div>
   );
 }

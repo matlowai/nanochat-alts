@@ -186,6 +186,7 @@ import requests
 @app.get("/models")
 async def get_models():
     """Fetches available free models from OpenRouter."""
+    global MODEL_CONTEXT_CACHE
     try:
         resp = requests.get("https://openrouter.ai/api/v1/models")
         if resp.status_code == 200:
@@ -201,11 +202,69 @@ async def get_models():
                 m for m in all_models 
                 if ":free" in m["id"] or m.get("pricing", {}).get("prompt") == "0"
             ]
+            
+            # Cache context_length for all models
+            for model in all_models:
+                model_id = model.get("id")
+                context_length = model.get("context_length") or model.get("top_provider", {}).get("context_length")
+                if model_id and context_length:
+                    MODEL_CONTEXT_CACHE[model_id] = context_length
+            
+            print(f"DEBUG: Cached context sizes for {len(MODEL_CONTEXT_CACHE)} models")
             return {"models": free_models}
         return {"models": []}
     except Exception as e:
         print(f"Error fetching models: {e}")
         return {"models": []}
+
+# --- Token Counting & Context Budget ---
+
+# Cache for model context sizes (populated from /models endpoint)
+MODEL_CONTEXT_CACHE = {}
+DEFAULT_CONTEXT_SIZE = 32768
+
+def get_model_context(model_id: str) -> int:
+    """Get context size for a model from cache or default."""
+    return MODEL_CONTEXT_CACHE.get(model_id, DEFAULT_CONTEXT_SIZE)
+
+def estimate_tokens(text: str) -> int:
+    """Rough token estimation: ~4 chars per token for English text."""
+    return max(1, len(text) // 4)
+
+class ContextBudgetRequest(BaseModel):
+    model: str
+    budget_percent: int = 50
+    max_tokens: int = 100000
+
+class ContextBudgetResponse(BaseModel):
+    model: str
+    model_context_size: int
+    budget_percent: int
+    available_tokens: int
+    max_tokens: int
+
+@app.post("/context-budget")
+async def get_context_budget(request: ContextBudgetRequest) -> ContextBudgetResponse:
+    """Calculate available context budget for a model."""
+    model_context = get_model_context(request.model)
+    
+    # Budget = min(model_context * percent, max_tokens)
+    budget_tokens = int(model_context * request.budget_percent / 100)
+    available = min(budget_tokens, request.max_tokens)
+    
+    return ContextBudgetResponse(
+        model=request.model,
+        model_context_size=model_context,
+        budget_percent=request.budget_percent,
+        available_tokens=available,
+        max_tokens=request.max_tokens
+    )
+
+@app.get("/model-context/{model_id:path}")
+async def get_model_context_size(model_id: str):
+    """Get context window size for a specific model."""
+    size = get_model_context(model_id)
+    return {"model": model_id, "context_size": size}
 
 class ChatRequest(BaseModel):
     message: str
@@ -213,11 +272,15 @@ class ChatRequest(BaseModel):
     context_nodes: Optional[List[str]] = None
     viewing_node: Optional[str] = None
     related_nodes: Optional[List[str]] = None
+    learner_profile: Optional[dict] = None
+    context_settings: Optional[dict] = None
+    conversation_memory: Optional[dict] = None  # {fullTurns, summaryTurns}
 
 class ChatResponse(BaseModel):
     response: str
     focused_nodes: List[str]
     context_nodes: List[str] = []
+    token_usage: Optional[dict] = None  # {prompt, completion, total}
 
 # ...
 
@@ -399,6 +462,48 @@ Offer to dig deeper into related concepts or dependencies.
                 related_labels.append(f"{rel_node.get('label', rel_id)} (`{rel_id}`)")
         if related_labels:
             related_context = f"\n**RELATED NODES**: {', '.join(related_labels)}\n"
+    
+    # Build learner profile context
+    learner_context = ""
+    if request.learner_profile:
+        profile = request.learner_profile
+        expertise = profile.get('expertise_level', 'beginner')
+        topics = profile.get('topics', {})
+        if topics:
+            topic_list = [f"{k} (confidence: {v.get('confidence', 0):.1f})" for k, v in list(topics.items())[:5]]
+            learner_context = f"""
+**LEARNER PROFILE**:
+- Expertise: {expertise}
+- Topics Discussed: {', '.join(topic_list) if topic_list else 'None yet'}
+- Notes: {profile.get('general_notes', 'New user')}
+"""
+    
+    # Build conversation memory context
+    memory_context = ""
+    if request.conversation_memory:
+        memory = request.conversation_memory
+        full_turns = memory.get('fullTurns', [])
+        summary_turns = memory.get('summaryTurns', [])
+        
+        if full_turns or summary_turns:
+            memory_context = "\n**CONVERSATION HISTORY**:\n"
+            
+            # Add summaries first (older turns)
+            if summary_turns:
+                memory_context += "*Previous context (summarized):*\n"
+                for turn in summary_turns[-6:]:  # Last 6 summaries
+                    memory_context += f"  - [{turn.get('role')}] {turn.get('summary', '')}\n"
+            
+            # Add full text turns (recent)
+            if full_turns:
+                memory_context += "\n*Recent conversation:*\n"
+                for turn in full_turns[-6:]:  # Last 6 full turns
+                    content = turn.get('content', '')[:200]
+                    if len(turn.get('content', '')) > 200:
+                        content += "..."
+                    memory_context += f"  - [{turn.get('role')}]: {content}\n"
+            
+            memory_context += "\n"
             
     system_prompt = f"""You are 'NanoChat', an expert AI educational assistant for the 'nanochat' codebase.
 You have access to a Knowledge Graph of the code.
@@ -407,6 +512,8 @@ Your goal is to help users understand the code, regardless of their expertise le
 {context_str}
 {viewing_context}
 {related_context}
+{learner_context}
+{memory_context}
 
 **Core Instructions:**
 1. **Assess Expertise**: If the user's question is basic (e.g., "What is this?", "How do I start?"), assume they are a **Beginner**. Explain concepts simply, avoiding jargon where possible, or defining it. If the question is complex, assume **Intermediate/Expert** but remain clear.
