@@ -9,7 +9,9 @@ import VizContainer from './components/VizContainer';
 import ModelSelector from './components/ModelSelector';
 import SettingsModal from './components/SettingsModal';
 import FocusList from './components/FocusList';
+import ChatHistory from './components/ChatHistory';
 import { exchangeCodeForKey } from './utils/auth';
+import { createConversation, getMessages, addMessage } from './utils/db';
 import './App.css';
 
 function App() {
@@ -31,7 +33,20 @@ function App() {
   const [isChatting, setIsChatting] = useState(false);
   const [highlightedNodes, setHighlightedNodes] = useState(new Set());
   const [focusedNodeIds, setFocusedNodeIds] = useState([]);
+  const [relatedNodeIds, setRelatedNodeIds] = useState([]);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  // Concept Navigation Graph
+  const [conceptGraph, setConceptGraph] = useState({});
+
+  // Chat History State
+  const [currentConversationId, setCurrentConversationId] = useState(null);
+
+  // Draggable Chat State
+  const [chatPosition, setChatPosition] = useState({ x: 100, y: window.innerHeight - 580 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState(() => {
     return localStorage.getItem('selectedModel') || "google/gemini-2.0-flash-exp:free";
@@ -83,6 +98,12 @@ function App() {
     fetch('/knowledge_graph.json')
       .then(res => res.json())
       .then(d => setData(d));
+
+    // Load concept navigation graph
+    fetch('/concept_graph.json')
+      .then(res => res.json())
+      .then(d => setConceptGraph(d))
+      .catch(() => console.log('No concept graph found'));
   }, []);
 
   useEffect(() => {
@@ -102,7 +123,11 @@ function App() {
         setMarkdownContent(''); // Clear markdown if a file is selected
       } else if (selectedNode.status !== 'missing' && selectedNode.status !== 'external') {
         // Fetch markdown (existing logic)
-        fetch(`/kb/${selectedNode.id}.md`)
+        // Strip 'concept:' prefix if present for the file path
+        const kbPath = selectedNode.id.startsWith('concept:')
+          ? selectedNode.id.replace('concept:', '')
+          : selectedNode.id;
+        fetch(`/kb/${kbPath}.md`)
           .then(res => {
             if (res.ok) return res.text();
             throw new Error('Not found');
@@ -148,6 +173,16 @@ function App() {
     setInputMessage('');
     setIsChatting(true);
 
+    // Ensure we have a conversation
+    let convoId = currentConversationId;
+    if (!convoId) {
+      convoId = await createConversation(inputMessage.substring(0, 50) || 'New Chat');
+      setCurrentConversationId(convoId);
+    }
+
+    // Save user message to IndexedDB
+    await addMessage(convoId, 'user', inputMessage);
+
     try {
       const headers = { 'Content-Type': 'application/json' };
       if (userApiKey) {
@@ -159,7 +194,9 @@ function App() {
         headers: headers,
         body: JSON.stringify({
           message: inputMessage,
-          model: selectedModel
+          model: selectedModel,
+          viewing_node: selectedNode?.id || null,
+          related_nodes: relatedNodeIds || []
         })
       });
       const data = await res.json();
@@ -167,13 +204,20 @@ function App() {
       const botMsg = { role: 'assistant', content: data.response };
       setMessages(prev => [...prev, botMsg]);
 
+      // Save assistant message to IndexedDB
+      await addMessage(convoId, 'assistant', data.response);
+
       // Handle focus
       if (data.focused_nodes && data.focused_nodes.length > 0) {
         setFocusedNodeIds(data.focused_nodes);
-        // setHighlightedNodes(new Set(data.focused_nodes)); // Optional: auto-highlight immediately?
-        // Let's rely on the user clicking the FocusList for the "Zoom" effect, 
-        // but maybe just highlight them in the graph passively?
         setHighlightedNodes(new Set(data.focused_nodes));
+      }
+
+      // Handle context (related nodes)
+      if (data.context_nodes && data.context_nodes.length > 0) {
+        setRelatedNodeIds(data.context_nodes);
+      } else {
+        setRelatedNodeIds([]);
       }
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + err.message }]);
@@ -181,6 +225,54 @@ function App() {
       setIsChatting(false);
     }
   };
+
+  // Drag handlers for chat window
+  const handleMouseDown = (e) => {
+    setIsDragging(true);
+    dragOffset.current = {
+      x: e.clientX - chatPosition.x,
+      y: e.clientY - chatPosition.y
+    };
+  };
+
+  const handleMouseMove = useCallback((e) => {
+    if (!isDragging) return;
+    setChatPosition({
+      x: e.clientX - dragOffset.current.x,
+      y: e.clientY - dragOffset.current.y
+    });
+  }, [isDragging]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging, handleMouseMove, handleMouseUp]);
+
+  // Load conversation from history
+  const handleSelectConversation = async (id) => {
+    setCurrentConversationId(id);
+    const msgs = await getMessages(id);
+    setMessages(msgs.map(m => ({ role: m.role, content: m.content })));
+  };
+
+  // New chat handler
+  const handleNewChat = () => {
+    setCurrentConversationId(null);
+    setMessages([
+      { role: 'assistant', content: "👋 Hi! I'm NanoChat. I can help you navigate this codebase. Are you new here, or looking for something specific?" }
+    ]);
+  };
+
 
   useEffect(() => {
     if (!data.nodes.length) return;
@@ -208,6 +300,31 @@ function App() {
     // Attach zoom to SVG
     svg.call(zoom);
 
+    // Define Glow Filter (Enhanced Aura)
+    const defs = svg.append('defs');
+    const filter = defs.append('filter')
+      .attr('id', 'glow')
+      .attr('x', '-100%')
+      .attr('y', '-100%')
+      .attr('width', '300%')
+      .attr('height', '300%');
+
+    // Inner intense glow
+    filter.append('feGaussianBlur')
+      .attr('stdDeviation', '2')
+      .attr('result', 'coloredBlur');
+
+    // Outer soft aura
+    filter.append('feGaussianBlur')
+      .attr('in', 'SourceGraphic')
+      .attr('stdDeviation', '6')
+      .attr('result', 'softBlur');
+
+    const feMerge = filter.append('feMerge');
+    feMerge.append('feMergeNode').attr('in', 'softBlur');
+    feMerge.append('feMergeNode').attr('in', 'coloredBlur');
+    feMerge.append('feMergeNode').attr('in', 'SourceGraphic');
+
     const simulation = d3.forceSimulation(data.nodes)
       .force('link', d3.forceLink(data.links).id(d => d.id).distance(100))
       .force('charge', d3.forceManyBody().strength(-300))
@@ -227,21 +344,35 @@ function App() {
       .selectAll('circle')
       .data(data.nodes)
       .join('circle')
-      .attr('r', d => highlightedNodes.has(d.id) ? 8 : 5) // Bigger if highlighted
-      .attr('fill', d => {
-        if (highlightedNodes.has(d.id)) return '#facc15'; // Yellow highlight
-        if (d.type === 'file') return '#3b82f6'; // Blue
-        if (d.status === 'missing') return '#ef4444'; // Red
-        if (d.status === 'external') return '#a855f7'; // Purple
-        return '#22c55e'; // Green (Defined Concept)
+      .attr('r', d => {
+        if (highlightedNodes.has(d.id)) return 10;
+        if (relatedNodeIds.includes(d.id)) return 7;
+        return 5;
       })
+      .attr('fill', d => {
+        // Keep original colors based on type
+        if (d.type === 'file') return '#3b82f6';
+        if (d.status === 'missing') return '#ef4444';
+        if (d.status === 'external') return '#a855f7';
+        return '#22c55e';
+      })
+      .attr('stroke', d => {
+        if (highlightedNodes.has(d.id)) return '#facc15'; // Yellow stroke for focus
+        if (relatedNodeIds.includes(d.id)) return '#fbbf24'; // Orange stroke for related
+        return '#fff';
+      })
+      .attr('stroke-width', d => {
+        if (highlightedNodes.has(d.id)) return 3;
+        if (relatedNodeIds.includes(d.id)) return 2;
+        return 1.5;
+      })
+      .style('filter', d => highlightedNodes.has(d.id) ? 'url(#glow)' : null)
       .call(drag(simulation));
 
     node.append('title')
       .text(d => d.label);
 
     node.on('click', (event, d) => {
-      // Stop propagation so zoom doesn't catch it (optional)
       event.stopPropagation();
       setSelectedNode(d);
       setSidebarOpen(true);
@@ -283,63 +414,69 @@ function App() {
         .on('end', dragended);
     }
 
-    // Store zoom behavior on the SVG node for external access
     svg.node().__zoomBehavior = zoom;
 
-  }, [data]); // Only re-run full simulation on data change
+  }, [data]);
 
-  // Re-run simulation/update attributes when highlightedNodes changes
+  // Re-run simulation/update attributes when highlightedNodes or relatedNodeIds changes
   useEffect(() => {
     const svg = d3.select(svgRef.current);
-    // Select the 'g' inside the root 'g' (since we added a wrapper)
-    // Actually, we can just select all circles under the SVG
     const nodes = svg.selectAll('circle');
 
     nodes
-      .attr('r', d => highlightedNodes.has(d.id) ? 8 : 5)
+      .attr('r', d => {
+        if (highlightedNodes.has(d.id)) return 10; // Bigger for focus
+        if (relatedNodeIds.includes(d.id)) return 7;
+        return 5;
+      })
       .attr('fill', d => {
-        if (highlightedNodes.has(d.id)) return '#facc15'; // Yellow highlight
+        // Keep original colors based on type
         if (d.type === 'file') return '#3b82f6';
         if (d.status === 'missing') return '#ef4444';
         if (d.status === 'external') return '#a855f7';
         return '#22c55e';
       })
-      .attr('stroke', d => highlightedNodes.has(d.id) ? '#fff' : '#fff')
-      .attr('stroke-width', d => highlightedNodes.has(d.id) ? 2.5 : 1.5);
+      .attr('stroke', d => {
+        if (highlightedNodes.has(d.id)) return '#facc15'; // Yellow stroke for focus
+        if (relatedNodeIds.includes(d.id)) return '#fbbf24'; // Orange stroke for related
+        return '#fff';
+      })
+      .attr('stroke-width', d => {
+        if (highlightedNodes.has(d.id)) return 3;
+        if (relatedNodeIds.includes(d.id)) return 2;
+        return 1.5;
+      })
+      .style('filter', d => highlightedNodes.has(d.id) ? 'url(#glow)' : null);
 
-  }, [highlightedNodes, data]); // Trigger update when highlights change
+  }, [highlightedNodes, relatedNodeIds, data]);
 
   const handleFocusNode = (node) => {
     if (!node) return;
 
-    // 1. Select the node
     setSelectedNode(node);
     setSidebarOpen(true);
 
-    // 2. Highlight Node + Neighbors
     const newHighlights = new Set();
     newHighlights.add(node.id);
-
-    // Find neighbors
-    data.links.forEach(link => {
-      if (link.source.id === node.id) newHighlights.add(link.target.id);
-      if (link.target.id === node.id) newHighlights.add(link.source.id);
-    });
-
     setHighlightedNodes(newHighlights);
 
-    // 3. Center Camera (Zoom to node)
+    const newRelatedNodeIds = [];
+    data.links.forEach(link => {
+      if (link.source.id === node.id) newRelatedNodeIds.push(link.target.id);
+      if (link.target.id === node.id) newRelatedNodeIds.push(link.source.id);
+    });
+    setRelatedNodeIds(newRelatedNodeIds);
+
     const svg = d3.select(svgRef.current);
     const width = window.innerWidth;
     const height = window.innerHeight;
 
-    // Retrieve the zoom behavior we stored
     const zoom = svg.node().__zoomBehavior;
     if (!zoom) return;
 
     const transform = d3.zoomIdentity
       .translate(width / 2, height / 2)
-      .scale(1.5)
+      .scale(2.0) // Closer zoom
       .translate(-node.x, -node.y);
 
     svg.transition()
@@ -355,11 +492,12 @@ function App() {
       <FocusList
         nodes={data.nodes}
         focusedNodeIds={focusedNodeIds}
+        relatedNodeIds={relatedNodeIds}
         onFocus={handleFocusNode}
       />
 
       {/* Settings Button */}
-      <div style={{ position: 'absolute', top: '20px', right: '120px', zIndex: 100 }}>
+      <div style={{ position: 'absolute', top: '20px', left: '20px', zIndex: 100 }}>
         <button
           onClick={() => setSettingsOpen(true)}
           className={`px-4 py-2 rounded-lg backdrop-blur-sm transition-colors font-medium ${userApiKey ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-gray-800/80 text-white hover:bg-gray-700'}`}
@@ -413,28 +551,47 @@ function App() {
         </div>
       )}
 
+      {/* Chat History Toggle */}
+      <ChatHistory
+        currentConversationId={currentConversationId}
+        onSelectConversation={handleSelectConversation}
+        onNewChat={handleNewChat}
+      />
+
       {/* Chat Toggle Button */}
-      <button className="chat-toggle" onClick={() => setChatOpen(!chatOpen)}>
+      <button className="chat-toggle" onClick={() => setChatOpen(!chatOpen)} style={{ left: '100px' }}>
         <MessageSquare size={24} />
       </button>
 
-      {/* Chat Interface */}
+      {/* Chat Interface (Draggable) */}
       {chatOpen && (
         <div className="chat-interface" style={{
           position: 'fixed',
-          bottom: '20px',
-          right: '20px',
-          width: '350px',
-          height: '500px',
+          left: `${chatPosition.x}px`,
+          top: `${chatPosition.y}px`,
+          width: '380px',
+          height: '520px',
           background: '#1e293b',
           borderRadius: '12px',
           boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
           display: 'flex',
           flexDirection: 'column',
           zIndex: 1000,
-          border: '1px solid #334155'
+          border: '1px solid #334155',
+          cursor: isDragging ? 'grabbing' : 'default'
         }}>
-          <div style={{ padding: '15px', borderBottom: '1px solid #334155', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {/* Draggable Header */}
+          <div
+            onMouseDown={handleMouseDown}
+            style={{
+              padding: '15px',
+              borderBottom: '1px solid #334155',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              cursor: 'grab',
+              userSelect: 'none'
+            }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <MessageSquare size={18} color="#60a5fa" />
               <span style={{ fontWeight: 'bold', color: 'white' }}>NanoChat AI</span>
@@ -523,6 +680,88 @@ function App() {
               </div>
             ) : (
               <div className="markdown-body">
+                {/* Concept Navigation */}
+                {selectedNode.id.startsWith('concept:') && conceptGraph[selectedNode.id] && (
+                  <div className="concept-nav" style={{
+                    display: 'flex',
+                    gap: '10px',
+                    marginBottom: '15px',
+                    flexWrap: 'wrap'
+                  }}>
+                    {/* Simpler (Prerequisites) */}
+                    {conceptGraph[selectedNode.id].prerequisites.length > 0 && (
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '5px' }}>
+                          ⬆️ Simpler
+                        </span>
+                        {conceptGraph[selectedNode.id].prerequisites.map(prereq => {
+                          const prereqNode = data.nodes.find(n => n.id === prereq);
+                          return prereqNode ? (
+                            <button
+                              key={prereq}
+                              onClick={() => {
+                                setSelectedNode(prereqNode);
+                                setHighlightedNodes(new Set([prereq]));
+                              }}
+                              style={{
+                                display: 'block',
+                                width: '100%',
+                                padding: '8px 12px',
+                                marginBottom: '5px',
+                                background: '#334155',
+                                border: '1px solid #475569',
+                                borderRadius: '6px',
+                                color: '#60a5fa',
+                                cursor: 'pointer',
+                                fontSize: '13px',
+                                textAlign: 'left'
+                              }}
+                            >
+                              {prereqNode.label}
+                            </button>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
+
+                    {/* Deeper (Leads To) */}
+                    {conceptGraph[selectedNode.id].leads_to.length > 0 && (
+                      <div style={{ flex: 1 }}>
+                        <span style={{ fontSize: '12px', color: '#94a3b8', display: 'block', marginBottom: '5px' }}>
+                          ⬇️ Deeper
+                        </span>
+                        {conceptGraph[selectedNode.id].leads_to.map(next => {
+                          const nextNode = data.nodes.find(n => n.id === next);
+                          return nextNode ? (
+                            <button
+                              key={next}
+                              onClick={() => {
+                                setSelectedNode(nextNode);
+                                setHighlightedNodes(new Set([next]));
+                              }}
+                              style={{
+                                display: 'block',
+                                width: '100%',
+                                padding: '8px 12px',
+                                marginBottom: '5px',
+                                background: '#334155',
+                                border: '1px solid #475569',
+                                borderRadius: '6px',
+                                color: '#22c55e',
+                                cursor: 'pointer',
+                                fontSize: '13px',
+                                textAlign: 'left'
+                              }}
+                            >
+                              {nextNode.label}
+                            </button>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {selectedNode.viz_id && (
                   <VizContainer vizId={selectedNode.viz_id} />
                 )}

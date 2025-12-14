@@ -1,0 +1,154 @@
+{
+    "concept:foundation.tensors": {
+        "difficulty": 1,
+        "prerequisites": [],
+        "leads_to": [
+            "concept:mlp",
+            "concept:rms_norm"
+        ]
+    },
+    "concept:mlp": {
+        "difficulty": 2,
+        "prerequisites": [
+            "concept:foundation.tensors"
+        ],
+        "leads_to": [
+            "concept:gpt.model",
+            "concept:attention.self_attention"
+        ]
+    },
+    "concept:rms_norm": {
+        "difficulty": 2,
+        "prerequisites": [
+            "concept:foundation.tensors"
+        ],
+        "leads_to": [
+            "concept:transformer.block"
+        ]
+    },
+    "concept:attention.self_attention": {
+        "difficulty": 3,
+        "prerequisites": [
+            "concept:mlp",
+            "concept:foundation.tensors"
+        ],
+        "leads_to": [
+            "concept:attention.gqa",
+            "concept:attention.rope"
+        ]
+    },
+    "concept:attention.rope": {
+        "difficulty": 3,
+        "prerequisites": [
+            "concept:attention.self_attention"
+        ],
+        "leads_to": [
+            "concept:gpt.model"
+        ]
+    },
+    "concept:attention.gqa": {
+        "difficulty": 4,
+        "prerequisites": [
+            "concept:attention.self_attention"
+        ],
+        "leads_to": [
+            "concept:inference.kv_cache"
+        ]
+    },
+    "concept:gpt.model": {
+        "difficulty": 4,
+        "prerequisites": [
+            "concept:mlp",
+            "concept:attention.self_attention",
+            "concept:rms_norm"
+        ],
+        "leads_to": [
+            "concept:gpt.config",
+            "concept:transformer.block"
+        ]
+    },
+    "concept:gpt.config": {
+        "difficulty": 3,
+        "prerequisites": [
+            "concept:gpt.model"
+        ],
+        "leads_to": []
+    },
+    "concept:transformer.block": {
+        "difficulty": 4,
+        "prerequisites": [
+            "concept:mlp",
+            "concept:attention.self_attention",
+            "concept:rms_norm"
+        ],
+        "leads_to": [
+            "concept:gpt.model"
+        ]
+    },
+    "concept:inference.kv_cache": {
+        "difficulty": 5,
+        "prerequisites": [
+            "concept:attention.gqa"
+        ],
+        "leads_to": [
+            "concept:inference.speculative"
+        ]
+    },
+    "concept:inference.speculative": {
+        "difficulty": 5,
+        "prerequisites": [
+            "concept:inference.kv_cache"
+        ],
+        "leads_to": []
+    },
+    "concept:optimization.ddp": {
+        "difficulty": 4,
+        "prerequisites": [
+            "concept:gpt.model"
+        ],
+        "leads_to": [
+            "concept:optimization.grad_acc"
+        ]
+    },
+    "concept:optimization.grad_acc": {
+        "difficulty": 4,
+        "prerequisites": [
+            "concept:gpt.model"
+        ],
+        "leads_to": [
+            "concept:optimization.mixed_precision"
+        ]
+    },
+    "concept:optimization.mixed_precision": {
+        "difficulty": 4,
+        "prerequisites": [
+            "concept:foundation.tensors",
+            "concept:gpt.model"
+        ],
+        "leads_to": []
+    },
+    "concept:tokenizer.tiktoken": {
+        "difficulty": 2,
+        "prerequisites": [],
+        "leads_to": [
+            "concept:tokenizer.special_tokens",
+            "concept:tokenizer.render_conversation"
+        ]
+    },
+    "concept:tokenizer.special_tokens": {
+        "difficulty": 3,
+        "prerequisites": [
+            "concept:tokenizer.tiktoken"
+        ],
+        "leads_to": [
+            "concept:tokenizer.render_conversation"
+        ]
+    },
+    "concept:tokenizer.render_conversation": {
+        "difficulty": 3,
+        "prerequisites": [
+            "concept:tokenizer.tiktoken"
+        ],
+        "leads_to": []
+    }
+}

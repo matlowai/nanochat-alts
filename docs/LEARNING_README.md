@@ -53,7 +53,15 @@ You need to configure API keys for the AI features to work.
     - The first run will download the embedding model (may take a few minutes).
     - Once running, the "Chat" and "Run Code" features in the viewer will be active.
 
-## 3. Troubleshooting
+## 3. Features
+
+- **Interactive Graph Viewer**: Explore the codebase as a knowledge graph.
+- **Chat Agent (NanoChat AI)**: Ask questions about the code in natural language.
+- **Draggable Chat Window**: Position the chat anywhere on screen.
+- **Chat History**: Conversations are automatically saved to IndexedDB. Access past chats via the "History" toggle in the top-left.
+- **Focus Mode**: Click nodes in "Suggested Focus" to center the camera and see neighbors.
+
+## 4. Troubleshooting
 
 - **Bridge Connection Failed**: Ensure `bun run start-bridge` is running on port 8999.
 - **Model Download Error**: Check your `HF_TOKEN` in `.env`.

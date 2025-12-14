@@ -632,8 +632,8 @@ body {
 /* Focus List Panel */
 .focus-list-panel {
   position: absolute;
-  top: 80px;
-  right: 120px;
+  top: 130px;
+  left: 20px;
   width: 250px;
   background-color: #1e293b;
   border: 1px solid #334155;
@@ -716,4 +716,135 @@ body {
 .focus-item:hover .focus-arrow {
   opacity: 1;
   color: #3b82f6;
+}
+
+/* Chat History Styles */
+.chat-history-container {
+  position: absolute;
+  top: 70px;
+  left: 20px;
+  z-index: 100;
+}
+
+.chat-history-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: #334155;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  color: #e2e8f0;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.2s;
+}
+
+.chat-history-toggle:hover {
+  background-color: #475569;
+}
+
+.chat-history-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 8px;
+  width: 280px;
+  max-height: 400px;
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+
+.new-chat-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 15px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #334155;
+  color: #60a5fa;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background-color 0.2s;
+}
+
+.new-chat-btn:hover {
+  background-color: #334155;
+}
+
+.conversation-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.conversation-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 15px;
+  border-bottom: 1px solid #334155;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.conversation-item:hover {
+  background-color: #334155;
+}
+
+.conversation-item.active {
+  background-color: rgba(59, 130, 246, 0.2);
+  border-left: 3px solid #3b82f6;
+}
+
+.convo-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.convo-title {
+  font-size: 0.85rem;
+  color: #e2e8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.convo-date {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.delete-btn {
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: all 0.2s;
+}
+
+.conversation-item:hover .delete-btn {
+  opacity: 1;
+}
+
+.delete-btn:hover {
+  color: #ef4444;
+  background-color: rgba(239, 68, 68, 0.1);
+}
+
+.empty-message {
+  padding: 20px;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.85rem;
 }

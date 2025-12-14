@@ -211,10 +211,13 @@ class ChatRequest(BaseModel):
     message: str
     model: str = "google/gemini-2.0-flash-exp:free" # Default
     context_nodes: Optional[List[str]] = None
+    viewing_node: Optional[str] = None
+    related_nodes: Optional[List[str]] = None
 
 class ChatResponse(BaseModel):
     response: str
     focused_nodes: List[str]
+    context_nodes: List[str] = []
 
 # ...
 
@@ -248,33 +251,162 @@ async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)
     if not client:
         return ChatResponse(
             response="**Chat Unavailable**: No API Key found. Please connect OpenRouter in Settings or add `OPENROUTER_API_KEY` to `.env`.",
-            focused_nodes=[]
+            focused_nodes=[],
+            context_nodes=[]
         )
     
-    # 1. Retrieve Relevant Nodes via LanceDB
+    # ===== PHASE 1: Agentic Intent Analysis =====
+    # Use LLM to understand user intent and generate optimal RAG query
+    intent_prompt = f"""Analyze this user message for a codebase learning assistant and return JSON only.
+
+User message: "{query}"
+
+Return this JSON structure (no markdown, just raw JSON):
+{{
+  "expertise_level": "beginner|intermediate|expert",
+  "rag_query": "optimized search query for semantic retrieval",
+  "priority_concepts": ["concept:...", "nanochat/..."]
+}}
+
+Guidelines:
+- For beginners: rag_query should include "foundational tensors neural network basics"
+- priority_concepts: suggest 2-3 most relevant nodes from: concept:foundation.tensors, concept:mlp, concept:attention.self_attention, concept:gpt.model, nanochat/gpt.py
+- For experts: focus on specific technical concepts they're asking about
+"""
+
+    rag_query = query  # Default fallback
+    priority_concepts = []
+    
+    try:
+        print("DEBUG: Phase 1 - Intent Analysis...")
+        intent_response = client.chat.completions.create(
+            model="google/gemini-2.0-flash-exp:free",  # Fast/cheap model
+            messages=[{"role": "user", "content": intent_prompt}],
+            max_tokens=200
+        )
+        intent_text = intent_response.choices[0].message.content.strip()
+        
+        # Parse JSON (handle potential markdown wrapping)
+        if intent_text.startswith("```"):
+            intent_text = intent_text.split("```")[1]
+            if intent_text.startswith("json"):
+                intent_text = intent_text[4:]
+        
+        intent = json.loads(intent_text)
+        rag_query = intent.get("rag_query", query)
+        priority_concepts = intent.get("priority_concepts", [])
+        expertise = intent.get("expertise_level", "unknown")
+        
+        print(f"DEBUG: Intent Analysis Result:")
+        print(f"  - Expertise: {expertise}")
+        print(f"  - RAG Query: {rag_query}")
+        print(f"  - Priority Concepts: {priority_concepts}")
+        
+    except Exception as e:
+        print(f"DEBUG: Intent analysis failed, using raw query: {e}")
+    
+    # ===== PHASE 2: Retrieve Relevant Nodes via LanceDB =====
     relevant_nodes = []
     if RAG_MODEL and TABLE:
         try:
-            query_embedding = RAG_MODEL.encode([query])[0]
-            results = TABLE.search(query_embedding).limit(5).to_list()
+            print(f"DEBUG: RAG Search Query: '{rag_query}'")
+            query_embedding = RAG_MODEL.encode([rag_query])[0]
+            print("DEBUG: Generated Query Embedding (Qwen).")
+            
+            # Get more results initially, then filter
+            results = TABLE.search(query_embedding).limit(15).to_list()
+            print(f"DEBUG: RAG Results (Top 15 before filtering):")
+            
+            # Prioritize educational content: concepts and core nanochat files
+            priority_nodes = []
+            secondary_nodes = []
+            
             for res in results:
-                relevant_nodes.append(res["id"])
+                node_id = res["id"]
+                distance = res.get('_distance', 999)
+                print(f"  - {node_id} (Distance: {distance})")
+                
+                # Prioritize: concept:*, nanochat/*.py
+                if node_id.startswith("concept:") or node_id.startswith("nanochat/"):
+                    priority_nodes.append(node_id)
+                # De-prioritize: tasks/*, scripts/*
+                elif not node_id.startswith("tasks/") and not node_id.startswith("scripts/"):
+                    secondary_nodes.append(node_id)
+            
+            # Combine: priority first, then secondary, limit to 5
+            relevant_nodes = (priority_nodes + secondary_nodes)[:5]
+            
+            # Inject LLM-suggested priority concepts at the top
+            if priority_concepts:
+                # Add priority concepts at the front (if they exist in graph)
+                valid_priorities = [c for c in priority_concepts if any(n['id'] == c for n in GRAPH_DATA['nodes'])]
+                relevant_nodes = valid_priorities + [n for n in relevant_nodes if n not in valid_priorities]
+                relevant_nodes = relevant_nodes[:5]  # Keep only top 5
+                print(f"DEBUG: Injected LLM priority concepts: {valid_priorities}")
+            
+            print(f"DEBUG: Final RAG Results: {relevant_nodes}")
+            
         except Exception as e:
             print(f"RAG Error: {e}")
             # Continue without context
     
-    # 2. Construct System Prompt
-    context_str = "Relevant Codebase Nodes:\n"
+    # 2. Construct System Prompt with RICH context
+    context_str = "Relevant Codebase Nodes (use these to guide the user):\n\n"
     for node_id in relevant_nodes:
         node = next((n for n in GRAPH_DATA['nodes'] if n['id'] == node_id), None)
         if node:
-            context_str += f"- {node['label']} ({node['type']}): {node['id']}\n"
+            node_type = node.get('type', 'unknown')
+            label = node.get('label', node_id)
+            docstring = node.get('docstring', '')
+            source = node.get('source', 'unknown')
+            file_path = node.get('file_path', '')
+            
+            context_str += f"### {label}\n"
+            context_str += f"- **ID**: `{node_id}`\n"
+            context_str += f"- **Type**: {node_type}\n"
+            context_str += f"- **Source**: {source}\n"
+            if file_path:
+                context_str += f"- **File**: {file_path}\n"
+            if docstring:
+                # Truncate long docstrings
+                short_doc = docstring[:300] + "..." if len(docstring) > 300 else docstring
+                context_str += f"- **Description**: {short_doc}\n"
+            context_str += "\n"
+    
+    # Add viewing context if user is looking at a specific node
+    viewing_context = ""
+    if request.viewing_node:
+        viewing_node = next((n for n in GRAPH_DATA['nodes'] if n['id'] == request.viewing_node), None)
+        if viewing_node:
+            print(f"DEBUG: User is viewing: {request.viewing_node}")
+            viewing_context = f"""
+**USER IS CURRENTLY VIEWING**: `{request.viewing_node}`
+- Label: {viewing_node.get('label', '')}
+- Type: {viewing_node.get('type', '')}
+- Description: {viewing_node.get('docstring', 'No description')[:500]}
+
+When the user says "explain this", "what is this", or refers to their current view, explain the node above.
+Offer to dig deeper into related concepts or dependencies.
+"""
+    
+    # Add related nodes context
+    related_context = ""
+    if request.related_nodes and len(request.related_nodes) > 0:
+        related_labels = []
+        for rel_id in request.related_nodes[:5]:
+            rel_node = next((n for n in GRAPH_DATA['nodes'] if n['id'] == rel_id), None)
+            if rel_node:
+                related_labels.append(f"{rel_node.get('label', rel_id)} (`{rel_id}`)")
+        if related_labels:
+            related_context = f"\n**RELATED NODES**: {', '.join(related_labels)}\n"
             
     system_prompt = f"""You are 'NanoChat', an expert AI educational assistant for the 'nanochat' codebase.
 You have access to a Knowledge Graph of the code.
 Your goal is to help users understand the code, regardless of their expertise level.
 
 {context_str}
+{viewing_context}
+{related_context}
 
 **Core Instructions:**
 1. **Assess Expertise**: If the user's question is basic (e.g., "What is this?", "How do I start?"), assume they are a **Beginner**. Explain concepts simply, avoiding jargon where possible, or defining it. If the question is complex, assume **Intermediate/Expert** but remain clear.
@@ -302,12 +434,16 @@ Example JSON:
         # print(f"DEBUG: Using API Key: {client.api_key[:10]}...{client.api_key[-4:]}")
         # print(f"DEBUG: Client Headers: {client.default_headers}")
         
+        messages_payload = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query}
+        ]
+        
+        print(f"DEBUG: LLM Request Messages:\n{json.dumps(messages_payload, indent=2)}")
+
         completion = client.chat.completions.create(
             model=request.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": query}
-            ],
+            messages=messages_payload,
             response_format={"type": "json_object"}
         )
 
@@ -320,22 +456,28 @@ Example JSON:
             # Fallback if model doesn't return valid JSON
             return ChatResponse(
                 response=content,
-                focused_nodes=[]
+                focused_nodes=[],
+                context_nodes=[]
             )
         
         valid_ids = set(n['id'] for n in GRAPH_DATA['nodes'])
         safe_focused = [nid for nid in result.get("focused_nodes", []) if nid in valid_ids]
         
+        # Filter relevant_nodes to ensure they are valid and not already in focused
+        safe_context = [nid for nid in relevant_nodes if nid in valid_ids and nid not in safe_focused]
+        
         return ChatResponse(
             response=result.get("response", "I couldn't generate a response."),
-            focused_nodes=safe_focused
+            focused_nodes=safe_focused,
+            context_nodes=safe_context
         )
         
     except Exception as e:
         print(f"LLM Error: {e}")
         return ChatResponse(
             response=f"**Error**: Failed to contact AI provider. ({str(e)})",
-            focused_nodes=[]
+            focused_nodes=[],
+            context_nodes=[]
         )
 
 if __name__ == "__main__":
