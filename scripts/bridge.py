@@ -268,7 +268,7 @@ async def get_model_context_size(model_id: str):
 
 class ChatRequest(BaseModel):
     message: str
-    model: str = "google/gemini-2.0-flash-exp:free" # Default
+    model: str  # Required - no defaults
     context_nodes: Optional[List[str]] = None
     viewing_node: Optional[str] = None
     related_nodes: Optional[List[str]] = None
@@ -286,15 +286,28 @@ class ChatResponse(BaseModel):
     profile_updates: Optional[dict] = None  # Updates to learner profile
 
 # --- Compression Endpoint ---
+# DESIGN PRINCIPLES (DO NOT VIOLATE):
+# 1. NO max_tokens - Let the LLM decide output length. max_tokens causes hard truncation.
+# 2. NO hardcoded models - Always use request.model (user's selected model).
+# 3. NO heuristic fallbacks - If LLM fails, keep original. No substring/truncation tricks.
+# 4. NO content truncation - Show full content everywhere. Use CSS for UI constraints.
 
 class CompressRequest(BaseModel):
     segments: List[dict]  # [{id, content}]
     prompt: str = "Summarize preserving technical details"
-    model: str = "google/gemini-2.0-flash-exp:free"
+    model: str  # Required - no defaults, user must specify
 
 @app.post("/compress")
 async def compress_segments(request: CompressRequest, authorization: Optional[str] = Header(None)):
-    """Compress context segments using LLM only. If LLM fails, keep original."""
+    """
+    Compress context segments using LLM only.
+    
+    IMPORTANT: This endpoint uses LLM compression ONLY.
+    - NO max_tokens limit (causes truncation)
+    - NO heuristic fallbacks (substring, truncation, etc.)
+    - Uses the user's selected model (request.model)
+    - If LLM fails or returns invalid result, keep original content
+    """
     print(f"DEBUG /compress: Received {len(request.segments)} segments")
     client = OPENROUTER_CLIENT
     
@@ -314,7 +327,7 @@ async def compress_segments(request: CompressRequest, authorization: Optional[st
         seg_content = segment.get("content", "")
         print(f"DEBUG /compress: Processing segment '{seg_id}' ({len(seg_content)} chars)")
         
-        # Skip empty or very short content
+        # Skip empty or very short content (nothing to compress)
         if not seg_content or len(seg_content) < 50:
             print(f"DEBUG /compress: Skipping '{seg_id}' - too short")
             compressed.append({
@@ -325,16 +338,36 @@ async def compress_segments(request: CompressRequest, authorization: Optional[st
             })
             continue
         
-        # LLM compression only - no heuristics, use selected model
+        # LLM compression - NO max_tokens (causes truncation), NO heuristics
         try:
+            llm_messages = [
+                {"role": "system", "content": "Compress to ~50%. Return ONLY compressed text, nothing else."},
+                {"role": "user", "content": seg_content}
+            ]
+            
+            print(f"DEBUG /compress REQUEST:")
+            print(f"  Model: {request.model}")
+            print(f"  Full user content:\n{seg_content}")
+            print(f"  --- END CONTENT ---")
+            
+            # NOTE: No max_tokens! Let the LLM decide how much to output.
+            # max_tokens causes hard truncation which is not intelligent compression.
             response = client.chat.completions.create(
-                model=request.model,
-                messages=[
-                    {"role": "system", "content": "Compress to ~50%. Return ONLY compressed text, nothing else."},
-                    {"role": "user", "content": seg_content}
-                ],
-                max_tokens=max(100, len(seg_content) // 3)
+                model=request.model,  # Always use user's selected model, never hardcode
+                messages=llm_messages
             )
+            
+            print(f"DEBUG /compress RESPONSE (full object):")
+            print(f"  {response}")
+            print(f"  --- END RESPONSE ---")
+            
+            if response.choices and len(response.choices) > 0:
+                choice = response.choices[0]
+                print(f"DEBUG /compress CHOICE details:")
+                print(f"  finish_reason: {choice.finish_reason}")
+                print(f"  message: {choice.message}")
+                print(f"  message.content (repr): {repr(choice.message.content)}")
+                print(f"  message.content (str): {str(choice.message.content)}")
             
             if response.choices and response.choices[0].message and response.choices[0].message.content:
                 summary = response.choices[0].message.content.strip()
@@ -375,7 +408,12 @@ async def compress_segments(request: CompressRequest, authorization: Optional[st
     print(f"DEBUG /compress: Returning {len(compressed)} compressed segments")
     return {"compressed": compressed}
 
-# ...
+# --- Chat Endpoint ---
+# DESIGN PRINCIPLES (DO NOT VIOLATE):
+# 1. NO max_tokens on LLM calls - Let the LLM decide output length.
+# 2. NO hardcoded models - Always use request.model for ALL LLM calls.
+# 3. NO content truncation - Show full docstrings, full conversation history.
+# 4. Use request.model for intent analysis, main chat, and any other LLM calls.
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, authorization: Optional[str] = Header(None)):
@@ -436,9 +474,8 @@ Guidelines:
     try:
         print("DEBUG: Phase 1 - Intent Analysis...")
         intent_response = client.chat.completions.create(
-            model="google/gemini-2.0-flash-exp:free",  # Fast/cheap model
-            messages=[{"role": "user", "content": intent_prompt}],
-            max_tokens=200
+            model=request.model,  # Use selected model
+            messages=[{"role": "user", "content": intent_prompt}]
         )
         intent_text = intent_response.choices[0].message.content.strip()
         
@@ -524,9 +561,7 @@ Guidelines:
             if file_path:
                 context_str += f"- **File**: {file_path}\n"
             if docstring:
-                # Truncate long docstrings
-                short_doc = docstring[:300] + "..." if len(docstring) > 300 else docstring
-                context_str += f"- **Description**: {short_doc}\n"
+                context_str += f"- **Description**: {docstring}\n"
             context_str += "\n"
     
     # Add viewing context if user is looking at a specific node
@@ -539,7 +574,7 @@ Guidelines:
 **USER IS CURRENTLY VIEWING**: `{request.viewing_node}`
 - Label: {viewing_node.get('label', '')}
 - Type: {viewing_node.get('type', '')}
-- Description: {viewing_node.get('docstring', 'No description')[:500]}
+- Description: {viewing_node.get('docstring', 'No description')}
 
 When the user says "explain this", "what is this", or refers to their current view, explain the node above.
 Offer to dig deeper into related concepts or dependencies.
