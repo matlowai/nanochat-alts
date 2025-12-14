@@ -275,12 +275,104 @@ class ChatRequest(BaseModel):
     learner_profile: Optional[dict] = None
     context_settings: Optional[dict] = None
     conversation_memory: Optional[dict] = None  # {fullTurns, summaryTurns}
+    injected_context: Optional[List[dict]] = None  # [{id, content}] for rehydrated turns
 
 class ChatResponse(BaseModel):
     response: str
     focused_nodes: List[str]
     context_nodes: List[str] = []
-    token_usage: Optional[dict] = None  # {prompt, completion, total}
+    token_usage: Optional[dict] = None
+    retrieve_context: Optional[List[str]] = None  # IDs for frontend to fetch
+    profile_updates: Optional[dict] = None  # Updates to learner profile
+
+# --- Compression Endpoint ---
+
+class CompressRequest(BaseModel):
+    segments: List[dict]  # [{id, content}]
+    prompt: str = "Summarize preserving technical details"
+    model: str = "google/gemini-2.0-flash-exp:free"
+
+@app.post("/compress")
+async def compress_segments(request: CompressRequest, authorization: Optional[str] = Header(None)):
+    """Compress context segments - uses LLM if available, otherwise simple truncation."""
+    print(f"DEBUG /compress: Received {len(request.segments)} segments")
+    client = OPENROUTER_CLIENT
+    
+    # Use user API key if provided
+    if authorization and authorization.startswith("Bearer "):
+        user_key = authorization.replace("Bearer ", "")
+        if user_key:
+            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=user_key)
+    
+    def simple_compress(text, target_ratio=0.5):
+        """Simple compression: take first and last parts, remove middle."""
+        if len(text) < 100:
+            return text
+        target_len = int(len(text) * target_ratio)
+        # Take first 60% and last 40% of target
+        first_part = text[:int(target_len * 0.6)]
+        last_part = text[-int(target_len * 0.4):]
+        return f"{first_part}...[compressed]...{last_part}"
+    
+    compressed = []
+    for segment in request.segments:
+        seg_id = segment.get("id")
+        seg_content = segment.get("content", "")
+        print(f"DEBUG /compress: Processing segment '{seg_id}' ({len(seg_content)} chars)")
+        
+        # Skip empty or very short content
+        if not seg_content or len(seg_content) < 50:
+            print(f"DEBUG /compress: Skipping '{seg_id}' - too short")
+            compressed.append({
+                "id": seg_id,
+                "content": seg_content,
+                "tokenCount": estimate_tokens(seg_content) if seg_content else 1,
+                "isCompacted": False
+            })
+            continue
+        
+        # Try LLM compression, fall back to simple compression
+        llm_success = False
+        if client:
+            try:
+                compress_model = "google/gemini-2.0-flash-001" if "gemini" in request.model.lower() else request.model
+                
+                response = client.chat.completions.create(
+                    model=compress_model,
+                    messages=[
+                        {"role": "system", "content": "Compress to ~50%. Return ONLY compressed text, nothing else."},
+                        {"role": "user", "content": seg_content}
+                    ],
+                    max_tokens=max(100, len(seg_content) // 3)
+                )
+                
+                if response.choices and response.choices[0].message and response.choices[0].message.content:
+                    summary = response.choices[0].message.content.strip()
+                    if summary and len(summary) < len(seg_content):
+                        print(f"DEBUG /compress: LLM compressed '{seg_id}' to {len(summary)*100//len(seg_content)}%")
+                        compressed.append({
+                            "id": seg_id,
+                            "content": summary,
+                            "tokenCount": estimate_tokens(summary),
+                            "isCompacted": True
+                        })
+                        llm_success = True
+            except Exception as e:
+                print(f"DEBUG /compress: LLM failed for '{seg_id}': {e}")
+        
+        # Fallback to simple compression
+        if not llm_success:
+            summary = simple_compress(seg_content)
+            print(f"DEBUG /compress: Simple compressed '{seg_id}' to {len(summary)*100//len(seg_content)}%")
+            compressed.append({
+                "id": seg_id,
+                "content": summary,
+                "tokenCount": estimate_tokens(summary),
+                "isCompacted": True
+            })
+    
+    print(f"DEBUG /compress: Returning {len(compressed)} compressed segments")
+    return {"compressed": compressed}
 
 # ...
 

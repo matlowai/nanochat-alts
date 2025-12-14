@@ -99,6 +99,7 @@ const ContextInspector = ({
                                 }
                                 <span className="ci-segment-label">
                                     {segment.label}
+                                    {segment.isTieredSummary && <span className="ci-tiered-badge">tier 2</span>}
                                     {segment.isCompacted && <span className="ci-compacted-badge">compacted</span>}
                                 </span>
                                 <span className="ci-segment-tokens">[{segment.tokenCount} tok]</span>
@@ -108,17 +109,23 @@ const ContextInspector = ({
                                 <div className="ci-segment-content">
                                     <pre>{segment.content.substring(0, 500)}{segment.content.length > 500 ? '...' : ''}</pre>
                                     <div className="ci-segment-actions">
-                                        {!segment.isCompacted && (
+                                        {!segment.isCompacted && !segment.isTieredSummary && (
                                             <>
                                                 <button onClick={() => handleSkip(segment.id)} title="Skip (1-line summary)">
                                                     <Zap size={14} /> Skip
                                                 </button>
                                             </>
                                         )}
-                                        {segment.isCompacted && segment.originalContent && (
+                                        {(segment.isCompacted || segment.isTieredSummary) && segment.originalContent && (
                                             <button onClick={() => {
                                                 const updated = contextSegments.map(s =>
-                                                    s.id === segment.id ? { ...s, content: s.originalContent, isCompacted: false, tokenCount: s.originalTokenCount } : s
+                                                    s.id === segment.id ? {
+                                                        ...s,
+                                                        content: s.originalContent,
+                                                        isCompacted: false,
+                                                        isTieredSummary: false,
+                                                        tokenCount: s.originalTokenCount
+                                                    } : s
                                                 );
                                                 onSegmentsChange(updated);
                                             }} title="Rehydrate full text">
@@ -151,8 +158,8 @@ const ContextInspector = ({
                         <button className="ci-compress-btn" onClick={handleCompressChecked}>
                             🗜️ Compress Checked
                         </button>
-                        <button className="ci-send-btn" onClick={onSend}>
-                            <Send size={16} /> Send with Context
+                        <button className="ci-close-btn" onClick={onClose}>
+                            Done
                         </button>
                     </div>
                 </div>

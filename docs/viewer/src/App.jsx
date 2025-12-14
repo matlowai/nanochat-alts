@@ -304,31 +304,48 @@ function App() {
     if (currentConversationId) {
       const memory = await buildConversationContext(currentConversationId, contextSettings);
 
+      // Combine all turns and sort by createdAt
+      const allTurns = [];
+
       // Full text turns
-      memory.fullTurns.forEach((turn, i) => {
-        segments.push({
-          id: `turn_full_${turn.id}`,
-          label: `Turn ${i + 1} (${turn.role}) - full`,
-          type: 'turn',
-          content: turn.content,
-          tokenCount: turn.tokenCount || Math.ceil(turn.content.length / 4),
-          included: true,
-          isCompacted: false,
-          originalContent: turn.content,
-          originalTokenCount: turn.tokenCount
+      memory.fullTurns.forEach((turn) => {
+        allTurns.push({
+          ...turn,
+          isFull: true,
+          isTieredSummary: false,
+          displayContent: turn.content
         });
       });
 
       // Summary turns
-      memory.summaryTurns.forEach((turn, i) => {
+      memory.summaryTurns.forEach((turn) => {
+        allTurns.push({
+          ...turn,
+          isFull: false,
+          isTieredSummary: true,
+          displayContent: turn.summary
+        });
+      });
+
+      // Sort by createdAt ascending (oldest first)
+      allTurns.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+      // Add to segments with proper turn numbering
+      allTurns.forEach((turn, i) => {
+        const tierLabel = turn.isFull ? 'full' : 'summary';
         segments.push({
-          id: `turn_summary_${turn.id}`,
-          label: `Turn ${memory.fullTurns.length + i + 1} (${turn.role}) - summary`,
+          id: `turn_${tierLabel}_${turn.id}`,
+          label: `Turn ${i + 1} (${turn.role}) - ${tierLabel}`,
           type: 'turn',
-          content: turn.summary,
-          tokenCount: turn.tokenCount || 20,
+          content: turn.displayContent,
+          originalContent: turn.originalContent || turn.content,
+          tokenCount: turn.tokenCount || Math.ceil(turn.displayContent.length / 4),
+          originalTokenCount: Math.ceil((turn.originalContent || turn.content).length / 4),
           included: true,
-          isCompacted: true
+          isCompacted: false,
+          isTieredSummary: turn.isTieredSummary,
+          hasSummary: turn.hasSummary,
+          createdAt: turn.createdAt
         });
       });
     }
@@ -919,9 +936,44 @@ function App() {
           setContextInspectorOpen(false);
           handleSendMessage();
         }}
-        onCompress={(segments, prompt) => {
-          // TODO: Implement LLM compression in Phase 8.5
-          console.log('Compress:', segments.length, 'segments with prompt:', prompt);
+        onCompress={async (segments, prompt) => {
+          try {
+            const headers = { 'Content-Type': 'application/json' };
+            if (userApiKey) {
+              headers['Authorization'] = `Bearer ${userApiKey}`;
+            }
+
+            const res = await fetch('http://localhost:8999/compress', {
+              method: 'POST',
+              headers: headers,
+              body: JSON.stringify({
+                segments: segments.map(s => ({ id: s.id, content: s.content })),
+                prompt: prompt || 'Summarize preserving technical details',
+                model: selectedModel
+              })
+            });
+            const data = await res.json();
+
+            if (data.compressed) {
+              const updated = contextSegments.map(seg => {
+                const compressed = data.compressed.find(c => c.id === seg.id);
+                if (compressed) {
+                  return {
+                    ...seg,
+                    originalContent: seg.content,
+                    originalTokenCount: seg.tokenCount,
+                    content: compressed.content,
+                    tokenCount: compressed.tokenCount,
+                    isCompacted: true
+                  };
+                }
+                return seg;
+              });
+              setContextSegments(updated);
+            }
+          } catch (err) {
+            console.error('Compression error:', err);
+          }
         }}
       />
     </div>

@@ -204,15 +204,20 @@ export async function buildConversationContext(conversationId, settings) {
                 id: msg.id,
                 role: msg.role,
                 content: msg.content,
-                tokenCount: msg.tokenCount
+                tokenCount: msg.tokenCount,
+                createdAt: msg.createdAt  // For sorting
             });
         } else if (i < (tier1Count + tier2Count) * 2) {
             const summary = await getTurnSummary(msg.id);
+            // Store messageId for rehydration and keep full content as originalContent
             result.summaryTurns.unshift({
                 id: msg.id,
                 role: msg.role,
-                summary: summary?.summary || `[${msg.role}] ${msg.content.substring(0, 50)}...`,
-                tokenCount: summary?.tokenCount || 20
+                summary: summary?.summary || `[${msg.role}]: ${msg.content}`,  // Full content as fallback (UI will handle display)
+                originalContent: msg.content,  // Always store for rehydration
+                tokenCount: summary?.tokenCount || msg.tokenCount || Math.ceil(msg.content.length / 4),
+                hasSummary: !!summary?.summary,
+                createdAt: msg.createdAt  // For sorting
             });
         } else {
             result.availableIds.unshift(msg.id);
