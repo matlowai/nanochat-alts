@@ -35,20 +35,11 @@ const ContextInspector = ({
     };
 
     const handleSkip = (id) => {
-        const updated = contextSegments.map(seg => {
-            if (seg.id === id) {
-                // Convert to 1-line summary
-                const summary = seg.content.substring(0, 80) + '...';
-                return {
-                    ...seg,
-                    content: summary,
-                    isCompacted: true,
-                    tokenCount: Math.ceil(summary.length / 4)
-                };
-            }
-            return seg;
-        });
-        onSegmentsChange(updated);
+        // Compress single segment via LLM (no heuristic truncation)
+        const segment = contextSegments.find(s => s.id === id);
+        if (segment && onCompress) {
+            onCompress([segment], compressionPrompt);
+        }
     };
 
     const handleCompressChecked = () => {
@@ -81,6 +72,25 @@ const ContextInspector = ({
                     <button className="ci-close" onClick={onClose}>✕</button>
                 </div>
 
+                {/* Check All / Uncheck All */}
+                <div className="ci-toggle-all">
+                    <label>
+                        <input
+                            type="checkbox"
+                            checked={contextSegments.every(s => s.included)}
+                            onChange={(e) => {
+                                const updated = contextSegments.map(seg => ({
+                                    ...seg,
+                                    included: e.target.checked
+                                }));
+                                onSegmentsChange(updated);
+                            }}
+                        />
+                        {contextSegments.every(s => s.included) ? 'Uncheck All' : 'Check All'}
+                    </label>
+                    <span className="ci-segment-count">{contextSegments.filter(s => s.included).length} / {contextSegments.length} selected</span>
+                </div>
+
                 <div className="ci-segments">
                     {contextSegments.map(segment => (
                         <div key={segment.id} className={`ci-segment ${segment.included ? '' : 'excluded'}`}>
@@ -107,7 +117,7 @@ const ContextInspector = ({
 
                             {expandedSegments.has(segment.id) && (
                                 <div className="ci-segment-content">
-                                    <pre>{segment.content.substring(0, 500)}{segment.content.length > 500 ? '...' : ''}</pre>
+                                    <pre>{segment.content}</pre>
                                     <div className="ci-segment-actions">
                                         {!segment.isCompacted && !segment.isTieredSummary && (
                                             <>

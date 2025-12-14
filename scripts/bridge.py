@@ -294,7 +294,7 @@ class CompressRequest(BaseModel):
 
 @app.post("/compress")
 async def compress_segments(request: CompressRequest, authorization: Optional[str] = Header(None)):
-    """Compress context segments - uses LLM if available, otherwise simple truncation."""
+    """Compress context segments using LLM only. If LLM fails, keep original."""
     print(f"DEBUG /compress: Received {len(request.segments)} segments")
     client = OPENROUTER_CLIENT
     
@@ -304,15 +304,9 @@ async def compress_segments(request: CompressRequest, authorization: Optional[st
         if user_key:
             client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=user_key)
     
-    def simple_compress(text, target_ratio=0.5):
-        """Simple compression: take first and last parts, remove middle."""
-        if len(text) < 100:
-            return text
-        target_len = int(len(text) * target_ratio)
-        # Take first 60% and last 40% of target
-        first_part = text[:int(target_len * 0.6)]
-        last_part = text[-int(target_len * 0.4):]
-        return f"{first_part}...[compressed]...{last_part}"
+    if not client:
+        print("DEBUG /compress: No API client - returning originals")
+        return {"compressed": [{"id": s.get("id"), "content": s.get("content", ""), "tokenCount": estimate_tokens(s.get("content", "")), "isCompacted": False} for s in request.segments]}
     
     compressed = []
     for segment in request.segments:
@@ -331,44 +325,51 @@ async def compress_segments(request: CompressRequest, authorization: Optional[st
             })
             continue
         
-        # Try LLM compression, fall back to simple compression
-        llm_success = False
-        if client:
-            try:
-                compress_model = "google/gemini-2.0-flash-001" if "gemini" in request.model.lower() else request.model
-                
-                response = client.chat.completions.create(
-                    model=compress_model,
-                    messages=[
-                        {"role": "system", "content": "Compress to ~50%. Return ONLY compressed text, nothing else."},
-                        {"role": "user", "content": seg_content}
-                    ],
-                    max_tokens=max(100, len(seg_content) // 3)
-                )
-                
-                if response.choices and response.choices[0].message and response.choices[0].message.content:
-                    summary = response.choices[0].message.content.strip()
-                    if summary and len(summary) < len(seg_content):
-                        print(f"DEBUG /compress: LLM compressed '{seg_id}' to {len(summary)*100//len(seg_content)}%")
-                        compressed.append({
-                            "id": seg_id,
-                            "content": summary,
-                            "tokenCount": estimate_tokens(summary),
-                            "isCompacted": True
-                        })
-                        llm_success = True
-            except Exception as e:
-                print(f"DEBUG /compress: LLM failed for '{seg_id}': {e}")
-        
-        # Fallback to simple compression
-        if not llm_success:
-            summary = simple_compress(seg_content)
-            print(f"DEBUG /compress: Simple compressed '{seg_id}' to {len(summary)*100//len(seg_content)}%")
+        # LLM compression only - no heuristics, use selected model
+        try:
+            response = client.chat.completions.create(
+                model=request.model,
+                messages=[
+                    {"role": "system", "content": "Compress to ~50%. Return ONLY compressed text, nothing else."},
+                    {"role": "user", "content": seg_content}
+                ],
+                max_tokens=max(100, len(seg_content) // 3)
+            )
+            
+            if response.choices and response.choices[0].message and response.choices[0].message.content:
+                summary = response.choices[0].message.content.strip()
+                # Must be at least 10 chars and shorter than original
+                if summary and len(summary) >= 10 and len(summary) < len(seg_content):
+                    print(f"DEBUG /compress: LLM compressed '{seg_id}' from {len(seg_content)} to {len(summary)} chars ({len(summary)*100//len(seg_content)}%)")
+                    compressed.append({
+                        "id": seg_id,
+                        "content": summary,
+                        "tokenCount": estimate_tokens(summary),
+                        "isCompacted": True
+                    })
+                else:
+                    print(f"DEBUG /compress: LLM returned invalid result for '{seg_id}' (len={len(summary) if summary else 0}), keeping original")
+                    compressed.append({
+                        "id": seg_id,
+                        "content": seg_content,
+                        "tokenCount": estimate_tokens(seg_content),
+                        "isCompacted": False
+                    })
+            else:
+                print(f"DEBUG /compress: LLM returned empty for '{seg_id}', keeping original")
+                compressed.append({
+                    "id": seg_id,
+                    "content": seg_content,
+                    "tokenCount": estimate_tokens(seg_content),
+                    "isCompacted": False
+                })
+        except Exception as e:
+            print(f"DEBUG /compress: LLM failed for '{seg_id}': {e}, keeping original")
             compressed.append({
                 "id": seg_id,
-                "content": summary,
-                "tokenCount": estimate_tokens(summary),
-                "isCompacted": True
+                "content": seg_content,
+                "tokenCount": estimate_tokens(seg_content),
+                "isCompacted": False
             })
     
     print(f"DEBUG /compress: Returning {len(compressed)} compressed segments")
@@ -590,9 +591,7 @@ Offer to dig deeper into related concepts or dependencies.
             if full_turns:
                 memory_context += "\n*Recent conversation:*\n"
                 for turn in full_turns[-6:]:  # Last 6 full turns
-                    content = turn.get('content', '')[:200]
-                    if len(turn.get('content', '')) > 200:
-                        content += "..."
+                    content = turn.get('content', '')
                     memory_context += f"  - [{turn.get('role')}]: {content}\n"
             
             memory_context += "\n"
